@@ -2,8 +2,8 @@
 import { getCollection } from 'astro:content';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 const notes = await getCollection('notes');
-const categories = [...new Set(notes.map((note) => note.data.category))].sort();
-const tags = [...new Set(notes.flatMap((note) => note.data.tags))].sort();
+const categories = Array.from(new Set(notes.map((note) => String(note.data.category)))).sort();
+const tags = Array.from(new Set(notes.flatMap((note) => note.data.tags.map((tag) => String(tag))))).sort();
 const slug = (value: string) => value.toLowerCase().replaceAll(' ', '-').replaceAll('&', 'and');
 ---
 <BaseLayout title="Topics · Tudor Shandrov" description="Topics covered in Tudor Shandrov's infrastructure engineering notes.">
