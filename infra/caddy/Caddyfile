@@ -1,0 +1,24 @@
+notes.shandrov.ru {
+	root * /srv/www/notes.shandrov.ru/current
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=604800"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Content-Security-Policy "default-src 'none'; script-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; manifest-src 'self'; media-src 'none'; worker-src 'none'"
+		-Server
+	}
+
+	file_server
+
+	handle_errors {
+		@not_found expression `{http.error.status_code} == 404`
+		handle @not_found {
+			rewrite * /404.html
+			file_server
+		}
+	}
+}

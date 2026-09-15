@@ -1,0 +1,44 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <meta name="author" content="Tudor Shandrov" />
+    <link rel="canonical" href={canonical} />
+    <link rel="alternate" type="application/rss+xml" title="Tudor Shandrov · Technical Notes" href="/rss.xml" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="shell nav">
+        <a class="brand" href="/">Tudor Shandrov <span>/ Technical Notes</span></a>
+        <nav aria-label="Primary navigation">
+          <a href="/notes/">Notes</a>
+          <a href="/topics/">Topics</a>
+          <a href="https://shandrov.ru">Portfolio ↗</a>
+          <a href="https://github.com/greksw">GitHub ↗</a>
+        </nav>
+      </div>
+    </header>
+    <main><slot /></main>
+    <footer class="site-footer">
+      <div class="shell footer-grid">
+        <span>© {new Date().getFullYear()} Tudor Shandrov</span>
+        <span>Infrastructure engineering notes · notes.shandrov.ru</span>
+      </div>
+    </footer>
+  </body>
+</html>

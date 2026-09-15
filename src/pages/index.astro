@@ -1,0 +1,38 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+const notes = (await getCollection('notes')).sort((a: any, b: any) => b.data.updated.valueOf() - a.data.updated.valueOf());
+const featured = notes.filter((note: any) => note.data.featured).slice(0, 3);
+const latest = notes.slice(0, 6);
+const categories: string[] = [...new Set<string>(notes.map((note: any): string => String(note.data.category)))].sort();
+---
+
+<BaseLayout title="Tudor Shandrov · Technical Notes" description="Practical infrastructure engineering notes on Linux, virtualization, networking, observability, storage and operations.">
+  <section class="hero">
+    <div class="shell">
+      <div class="eyebrow">Infrastructure engineering knowledge base</div>
+      <h1>Technical notes for systems that have to keep working.</h1>
+      <p class="lead">Practical notes by Tudor Shandrov on Linux, Proxmox, networking, observability, storage, security and production operations. Focused on decisions, validation and failure modes rather than copy-paste recipes.</p>
+    </div>
+  </section>
+
+  <section class="section shell">
+    <div class="section-head"><h2>Featured notes</h2><a href="/notes/">All notes →</a></div>
+    <div class="grid">
+      {featured.map((note: any) => <a class="card" href={`/notes/${note.id}/`}><div class="meta"><span>{note.data.category}</span><span>Updated {note.data.updated.toISOString().slice(0,10)}</span></div><h3>{note.data.title}</h3><p>{note.data.description}</p><div class="tags">{note.data.tags.slice(0,4).map((tag: string) => <span class="tag">{tag}</span>)}</div></a>)}
+    </div>
+  </section>
+
+  <section class="section shell">
+    <div class="section-head"><h2>Latest</h2></div>
+    <div class="grid">
+      {latest.map((note: any) => <a class="card" href={`/notes/${note.id}/`}><div class="meta"><span>{note.data.status}</span><span>{note.data.category}</span></div><h3>{note.data.title}</h3><p>{note.data.description}</p></a>)}
+    </div>
+  </section>
+
+  <section class="section shell">
+    <div class="section-head"><h2>Topics</h2><a href="/topics/">Browse all →</a></div>
+    <div class="topic-list">{categories.map((category: string) => <a href={`/topics/#${category.toLowerCase().replaceAll(' ', '-').replaceAll('&','and')}`}>{category}</a>)}</div>
+  </section>
+</BaseLayout>

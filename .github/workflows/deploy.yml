@@ -1,0 +1,64 @@
+name: Deploy production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notes-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build Astro site
+        run: npm run build
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 0600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/known_hosts
+      - name: Deploy release
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          RELEASE="release-${GITHUB_SHA}"
+          BASE="/srv/www/notes.shandrov.ru"
+          RELEASE_DIR="${BASE}/releases/${RELEASE}"
+          CURRENT="${BASE}/current"
+          PREVIOUS="$(ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 "${DEPLOY_USER}@${DEPLOY_HOST}" "readlink -f '${CURRENT}' || true")"
+          ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p '${RELEASE_DIR}'"
+          rsync -az --delete -e "ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519" dist/ "${DEPLOY_USER}@${DEPLOY_HOST}:${RELEASE_DIR}/"
+          ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 "${DEPLOY_USER}@${DEPLOY_HOST}" "ln -s '${RELEASE_DIR}' '${CURRENT}.new' && mv -Tf '${CURRENT}.new' '${CURRENT}'"
+          if ! curl --fail --silent --show-error --retry 5 --retry-delay 2 https://notes.shandrov.ru/ >/dev/null; then
+            if [ -n "${PREVIOUS}" ]; then
+              ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 "${DEPLOY_USER}@${DEPLOY_HOST}" "rm -f '${CURRENT}.new' && ln -s '${PREVIOUS}' '${CURRENT}.new' && mv -Tf '${CURRENT}.new' '${CURRENT}'"
+            fi
+            exit 1
+          fi
+      - name: Cleanup old releases
+        if: success()
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 "${DEPLOY_USER}@${DEPLOY_HOST}" 'cd /srv/www/notes.shandrov.ru/releases && ls -1dt release-* 2>/dev/null | tail -n +6 | xargs -r rm -rf --'
