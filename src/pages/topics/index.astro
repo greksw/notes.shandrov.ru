@@ -2,12 +2,12 @@
 import { getCollection } from 'astro:content';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 const notes = await getCollection('notes');
-const categories = Array.from(new Set(notes.map((note) => String(note.data.category)))).sort();
-const tags = Array.from(new Set(notes.flatMap((note) => note.data.tags.map((tag) => String(tag))))).sort();
+const categories: string[] = [...new Set<string>(notes.map((note: any): string => String(note.data.category)))].sort();
+const tags: string[] = [...new Set<string>(notes.flatMap((note: any) => note.data.tags.map((tag: string) => String(tag))))].sort();
 const slug = (value: string) => value.toLowerCase().replaceAll(' ', '-').replaceAll('&', 'and');
 ---
 <BaseLayout title="Topics · Tudor Shandrov" description="Topics covered in Tudor Shandrov's infrastructure engineering notes.">
   <section class="hero"><div class="shell"><div class="eyebrow">Index</div><h1>Topics</h1><p class="lead">The knowledge base is organized by operational domain, with product and technology tags kept secondary.</p></div></section>
-  <section class="section shell"><div class="section-head"><h2>Domains</h2></div>{categories.map((category) => <section id={slug(category)} style="margin-bottom:42px"><h3>{category}</h3><div class="grid">{notes.filter((note) => note.data.category === category).map((note) => <a class="card" href={`/notes/${note.id}/`}><h3>{note.data.title}</h3><p>{note.data.description}</p></a>)}</div></section>)}</section>
-  <section class="section shell"><div class="section-head"><h2>Technology tags</h2></div><div class="topic-list">{tags.map((tag) => <span class="tag">{tag}</span>)}</div></section>
+  <section class="section shell"><div class="section-head"><h2>Domains</h2></div>{categories.map((category: string) => <section id={slug(category)} style="margin-bottom:42px"><h3>{category}</h3><div class="grid">{notes.filter((note: any) => note.data.category === category).map((note: any) => <a class="card" href={`/notes/${note.id}/`}><h3>{note.data.title}</h3><p>{note.data.description}</p></a>)}</div></section>)}</section>
+  <section class="section shell"><div class="section-head"><h2>Technology tags</h2></div><div class="topic-list">{tags.map((tag: string) => <span class="tag">{tag}</span>)}</div></section>
 </BaseLayout>
