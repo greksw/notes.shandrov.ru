@@ -1,0 +1,24 @@
+{
+  "name": "notes.shandrov.ru",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro check && astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@astrojs/sitemap": "^3.7.4",
+    "astro": "^7.3.2",
+    "typescript": "^5.9.2"
+  },
+  "allowScripts": {
+    "esbuild": true
+  }
+}

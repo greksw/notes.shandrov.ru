@@ -1,0 +1,28 @@
+---
+import { getCollection, render } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+export async function getStaticPaths() {
+  const notes = await getCollection('notes');
+  return notes.map((note) => ({ params: { id: note.id }, props: { note } }));
+}
+
+const { note } = Astro.props;
+const { Content } = await render(note);
+---
+
+<BaseLayout title={`${note.data.title} · Tudor Shandrov`} description={note.data.description}>
+  <article class="article">
+    <a href="/notes/">← All notes</a>
+    <div class="eyebrow" style="margin-top:32px">{note.data.category}</div>
+    <h1>{note.data.title}</h1>
+    <p class="lead">{note.data.description}</p>
+    <div class="note-meta meta">
+      <span>Status: {note.data.status}</span>
+      <span>Published: {note.data.published.toISOString().slice(0,10)}</span>
+      <span>Updated: {note.data.updated.toISOString().slice(0,10)}</span>
+    </div>
+    {note.data.testedOn.length > 0 && <p class="notice"><strong>Tested on:</strong> {note.data.testedOn.join(' · ')}</p>}
+    <Content />
+  </article>
+</BaseLayout>
