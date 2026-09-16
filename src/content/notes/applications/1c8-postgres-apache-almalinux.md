@@ -1,19 +1,19 @@
 ---
-title: "1C:Enterprise 8 + PostgreSQL + Apache on AlmaLinux"
-description: "A deployment baseline for a 1C:Enterprise 8 application server, PostgreSQL-compatible database and Apache 2.4 web publication on AlmaLinux, with explicit support-matrix and rollback boundaries."
+title: "1C:Enterprise 8 + Postgres Pro 1C + Apache on AlmaLinux"
+description: "A production-backed deployment baseline for 1C:Enterprise 8.3.27, Postgres Pro 1C 17 and Apache 2.4 on AlmaLinux 9, including service layout, web publication, monitoring and rollback boundaries."
 category: "Applications & Services"
 tags: ["1c", "postgresql", "postgres-pro", "apache", "almalinux", "erp"]
 published: 2026-09-16
 updated: 2026-09-16
-status: lab
-testedOn: []
+status: current
+testedOn: ["AlmaLinux 9.8", "1C:Enterprise 8.3.27", "Postgres Pro 1C 17.10", "Apache 2.4.62"]
 featured: true
 translationKey: "applications/1c8-postgres-apache-almalinux"
 ---
 
 ## Context
 
-A typical Linux-based 1C:Enterprise deployment has three distinct layers:
+This stack is used in production as a three-layer 1C deployment:
 
 ```text
 users / web clients
@@ -22,55 +22,63 @@ users / web clients
 Apache 2.4
         |
         v
-1C:Enterprise 8 application server cluster
+1C:Enterprise 8 application server
         |
         v
-PostgreSQL-compatible database server
+Postgres Pro 1C 17
 ```
 
-These layers should be treated separately during deployment and troubleshooting. A working Apache page does not prove that the 1C cluster can reach the database, and a running PostgreSQL process does not prove that the infobase is healthy.
-
-This runbook is deliberately marked **lab** until the exact 1C platform build, database distribution/version and AlmaLinux release used in the target environment are confirmed end-to-end.
-
-## Verify the support matrix first
-
-Do not begin with package installation. First confirm that the exact combination is supported by the vendors:
+The verified server baseline is:
 
 ```text
-1C:Enterprise platform version
-Linux distribution and major version
-PostgreSQL/Postgres Pro version
-Apache version and architecture
+OS:              AlmaLinux 9.8
+1C:Enterprise:   8.3.27 family
+PostgreSQL:      Postgres Pro 1C 17.10
+Apache:          2.4.62
 ```
 
-The 1C administrator documentation publishes supported Linux distributions by platform release. AlmaLinux is RHEL-compatible, but a compatible distribution is not automatically the same thing as a formally supported one for every 1C release. Treat vendor support status as a release-specific decision.
+Several 1C 8.3.27 service builds are installed side by side, while the default enabled service is based on build `8.3.27.2325`. This makes version-aware service and web-publication handling important: do not assume that the newest binary discovered on disk is always the one serving the production infobase.
 
-For the database layer, use a PostgreSQL build explicitly supported for the selected 1C platform. Do not assume the stock AlmaLinux AppStream PostgreSQL package is automatically suitable.
+## Production service layout
 
-Postgres Pro documents dedicated 1C configuration guidance and current Postgres Pro releases support AlmaLinux 9/10. If Postgres Pro is selected, use the exact edition/version approved for the application and licensing model.
+The host exposes separate systemd units for the 1C runtime and the database. A sanitized inventory resembles:
 
-## Suggested deployment order
+```text
+postgrespro-1c-17.service
+srv1cv8-8.3.27.1719.service
+srv1cv8-8.3.27.1859.service
+srv1cv8-8.3.27.2325@.service
+srv1cv8-8.3.27.2325@default.service
+postgres_exporter.service
+fm-1c-metrics.service / fm-1c-metrics.timer
+```
 
-A safe order is:
+The production database unit is active, and PostgreSQL metrics are exported through `postgres_exporter`. A separate 1C metrics timer is also present.
+
+This separation is useful operationally: application, database, web and monitoring failures can be diagnosed independently.
+
+## Deployment order
+
+Use a layered sequence:
 
 ```text
 OS preparation
-  -> locale/time/DNS
-  -> database server
+  -> locale / time / DNS
+  -> Postgres Pro 1C
   -> 1C server packages
-  -> 1C cluster validation
-  -> test infobase
+  -> 1C service validation
+  -> infobase validation
   -> Apache
   -> web publication
-  -> TLS/firewall
-  -> backup and monitoring
+  -> TLS / firewall
+  -> backup / monitoring
 ```
 
-Do not expose the web endpoint before the backend layers are validated.
+Do not start with Apache. The backend should work before exposing the web layer.
 
 ## Prepare AlmaLinux
 
-Start from a minimal, patched host.
+Start from a patched minimal installation:
 
 ```bash
 sudo dnf update -y
@@ -78,69 +86,69 @@ sudo hostnamectl status
 sudo timedatectl status
 ```
 
-1C/PostgreSQL deployments commonly require a Russian UTF-8 locale. Confirm what is available:
+Confirm the required locale before initializing the database cluster:
 
 ```bash
 locale -a | grep -Ei 'ru_RU.*utf'
 ```
 
-If it is missing, install/generate the locale using the method appropriate for the AlmaLinux release before initializing the database cluster.
+For 1C/PostgreSQL deployments, Russian UTF-8 locale handling is not a cosmetic choice; it affects collation and application behavior.
 
-Also verify DNS resolution in both directions for the names that the 1C server and database will actually use.
+Also verify forward and reverse DNS for the names actually used between the 1C server and the database.
 
-## Database layer
+## Install Postgres Pro 1C
 
-### Use a 1C-supported PostgreSQL distribution
+The production database is not the stock AlmaLinux AppStream PostgreSQL package. It uses the 1C-specific Postgres Pro 17 build.
 
-The database package source should be part of the design decision, not an afterthought.
-
-Possible choices include a Postgres Pro edition or another PostgreSQL build explicitly supported for the selected 1C release.
-
-Keep these values documented:
+Installed package family:
 
 ```text
-database product
-major/minor version
-package repository/source
-cluster data path
-locale used at initdb
-authentication method
-backup method
+postgrespro-1c-17
+postgrespro-1c-17-client
+postgrespro-1c-17-contrib
+postgrespro-1c-17-libs
+postgrespro-1c-17-server
 ```
 
-### Initialize with the intended locale
-
-The locale used when the database cluster is created matters. Postgres Pro's 1C guidance explicitly calls out use of a Russian UTF-8 locale.
-
-Check before initialization:
+Verify the client version:
 
 ```bash
-locale
+psql --version
 ```
 
-Do not initialize the cluster under an accidental `C`/`POSIX` locale and try to fix it later in production.
+Expected production baseline:
 
-### Keep PostgreSQL private
+```text
+psql (PostgreSQL) 17.10
+```
 
-The database should normally listen only on addresses needed by the 1C application tier.
-
-Validate listening sockets:
+Validate the service:
 
 ```bash
+systemctl status postgrespro-1c-17 --no-pager
 ss -lntp | grep 5432
 ```
 
-Then restrict host authentication in `pg_hba.conf` to the actual 1C server network or address range.
+Keep TCP/5432 private. Restrict `pg_hba.conf` to the real 1C application tier or approved administration network.
 
-Do not expose TCP/5432 to the Internet.
+## Database initialization and tuning
 
-### Tune for 1C deliberately
+Initialize the database only after locale, storage and authentication decisions are final.
 
-Do not paste a generic `postgresql.conf` from another server.
+Document at minimum:
 
-1C workloads can require many connections and have specific temporary-table and planner behavior. Postgres Pro publishes a dedicated 1C tuning section and provides tooling such as `pgpro_tune` in current releases.
+```text
+cluster data path
+locale / collation
+listen addresses
+pg_hba rules
+backup method
+WAL/archive policy
+```
 
-At minimum review:
+Do not paste a generic `postgresql.conf` from another server. Tune for the actual workload.
+
+Review at least:
 
 ```text
 max_connections
@@ -149,44 +157,32 @@ work_mem
 maintenance_work_mem
 effective_cache_size
 checkpoint/WAL settings
-locale/collation
+temporary workload
 storage latency
 ```
 
-The correct values depend on RAM, CPU, database size and user concurrency.
+Postgres Pro publishes dedicated configuration guidance for 1C workloads; use that as the baseline and then validate under the real workload.
 
-## Install 1C:Enterprise 8 server packages
+## Install 1C:Enterprise server packages
 
-1C Linux packages are proprietary software. Obtain the exact server distribution from the authorized 1C source and transfer it to the host through an approved channel.
+1C Linux packages are proprietary and should come from an authorized source.
 
-Do not publish vendor RPM files in a public repository.
+Do not publish vendor RPMs in Git.
 
-Before installation, inspect the package set:
+Inspect the package set before installation:
 
 ```bash
 ls -1 *.rpm
 rpm -qpi ./*.rpm | less
 ```
 
-Install only the components required by the design:
+Then install only the required components:
 
 ```bash
 sudo dnf install ./*.rpm
 ```
 
-Package names vary between 1C platform releases, so avoid hard-coding one historical RPM filename into automation unless that exact build is pinned intentionally.
-
-After installation, inventory the resulting packages:
-
-```bash
-rpm -qa | grep -Ei '1c|1cv8' | sort
-```
-
-## Locate the installed 1C version
-
-On Linux, 1C platform binaries are commonly installed under a versioned path below `/opt/1cv8/x86_64/`.
-
-Inspect rather than guessing:
+After installation, discover the platform layout rather than assuming one historical package or path:
 
 ```bash
 find /opt/1cv8/x86_64 -maxdepth 2 -type f \
@@ -194,83 +190,93 @@ find /opt/1cv8/x86_64 -maxdepth 2 -type f \
   -print
 ```
 
-The exact same platform version that serves the infobase should be used when publishing it through `webinst`.
+## Handle multiple 1C builds explicitly
 
-## Validate the 1C server service
+The production server contains several 8.3.27 service definitions. Therefore every operation that depends on a platform binary should be tied to the intended build.
 
-Service-unit names can differ between platform releases/package layouts. Discover them first:
+List units:
 
 ```bash
 systemctl list-unit-files | grep -Ei '1c|srv1cv8'
 ```
 
-Then inspect the actual unit:
+Then inspect the exact active or intended instance:
 
 ```bash
-systemctl status '<detected-unit>' --no-pager
+systemctl status 'srv1cv8-8.3.27.2325@default.service' --no-pager
 ```
 
-Do not enable a guessed unit name in automation.
+The version used for `webinst` should match the 1C server version that serves the target infobase.
 
-Also inspect listening sockets:
+Do not publish a web endpoint with an arbitrary `webinst` selected only because it sorts last.
+
+## Validate 1C listeners
+
+Check the configured cluster ports:
 
 ```bash
 ss -lntp | grep -E ':(1540|1541|156[0-9]|157[0-9]|158[0-9]|159[0-1])\b'
 ```
 
-The exact cluster port design should match the environment and firewall policy.
+The exact allowed range should match the cluster configuration and firewall policy.
+
+Do not open the full range to every network by default.
 
 ## Create or attach the infobase
 
-The database itself should be created through the supported 1C administration workflow for the selected platform version.
+Before Apache enters the picture, confirm that the infobase works through a normal 1C client connection.
 
-Record at least:
+Record:
 
 ```text
-1C cluster/server name
+1C cluster/server
 infobase logical name
 database host
 database name
 database account
 locale/encoding
-whether the database was newly created or attached
+new database or attached existing database
 ```
 
-Do not store the database password in public shell history, documentation or Git.
-
-Before adding Apache, confirm that the infobase works through a normal 1C client connection.
+Never place the database password in public documentation, shell history or Git.
 
 ## Install Apache 2.4
 
-On AlmaLinux:
+The production baseline uses Apache 2.4.62 from AlmaLinux.
+
+Install and enable:
 
 ```bash
 sudo dnf install -y httpd
 sudo systemctl enable --now httpd
 ```
 
-Validate the base service:
+Validate:
 
 ```bash
+httpd -v
 apachectl configtest
 systemctl status httpd --no-pager
 ss -lntp | grep -E ':(80|443)\b'
 ```
 
-Keep the initial test local or on the internal network until the 1C publication is ready.
-
 ## Publish the infobase with `webinst`
 
-1C provides the `webinst` utility for configuring a web publication. For Apache 2.4 the documented mode is `-apache24`.
+1C provides `webinst` for web publication. For Apache 2.4 use `-apache24`.
 
-First identify the exact binary for the installed platform version:
+First identify the intended platform build explicitly.
+
+Example:
 
 ```bash
-WEBINST=$(find /opt/1cv8/x86_64 -type f -name webinst | sort -V | tail -1)
-printf '%s\n' "$WEBINST"
+WEBINST='/opt/1cv8/x86_64/8.3.27.2325/webinst'
 ```
 
-For production, do not blindly take the newest binary if multiple platform versions are installed. Select the version that exactly matches the infobase server version.
+Verify it exists before use:
+
+```bash
+test -x "$WEBINST"
+```
 
 Create a dedicated publication directory:
 
@@ -278,7 +284,7 @@ Create a dedicated publication directory:
 sudo install -d -o root -g apache -m 0750 /var/www/1c/demo
 ```
 
-Example publication:
+Publish with sanitized placeholders:
 
 ```bash
 sudo "$WEBINST" \
@@ -290,87 +296,105 @@ sudo "$WEBINST" \
   -confpath /etc/httpd/conf/httpd.conf
 ```
 
-Use sanitized placeholders in documentation; the real server name and infobase name are environment-specific.
-
-After publication:
+Then validate and reload Apache:
 
 ```bash
 sudo apachectl configtest
 sudo systemctl reload httpd
 ```
 
-1C documentation also notes that the Apache user must have read/execute access to the executable directory of the corresponding 1C platform version.
+The Apache account must be able to read/execute the web extension files for the selected 1C build.
 
-## Validate the generated Apache configuration
+## Validate generated Apache configuration
 
-Search what changed:
+Inspect what was added:
 
 ```bash
 grep -RniE '1cv8|wsap|demo' /etc/httpd /var/www/1c 2>/dev/null
 ```
 
-Confirm the 1C Apache extension path exists and matches Apache bitness.
-
-The 1C documentation explicitly requires matching web-server-extension and web-server architecture.
+Check that the referenced 1C web-server extension exists and that its architecture matches Apache.
 
 ## SELinux
 
-Do not solve a publication problem by permanently disabling SELinux.
+Do not permanently disable SELinux to make 1C web publication work.
 
-Check current mode:
+Check mode:
 
 ```bash
 getenforce
 ```
 
-If Apache starts but the 1C web publication fails, inspect denials:
+If Apache starts but the 1C publication fails, inspect AVC denials:
 
 ```bash
 sudo ausearch -m AVC,USER_AVC -ts recent
 ```
 
-Then fix file contexts, permissions or create a narrowly scoped local policy based on the actual denial.
+Fix contexts, permissions or create a narrowly scoped local policy based on the actual denial.
 
-A temporary `setenforce 0` can be useful only as a diagnostic comparison, not as the final configuration.
+`setenforce 0` is acceptable only as a temporary diagnostic comparison.
 
-## Firewall
+## Firewall model
 
-Expose only the services that are actually needed.
-
-Typical separation:
+Use least privilege between layers:
 
 ```text
-client -> Apache: 443
-1C client/admin network -> 1C cluster ports
-1C application tier -> PostgreSQL: 5432
-Internet -> PostgreSQL: never
+web clients              -> Apache: 443
+1C client/admin networks -> required 1C cluster ports
+1C application tier      -> Postgres Pro: 5432
+Internet                 -> PostgreSQL: never
 ```
 
-If the web client is required externally, publish HTTPS rather than plain HTTP and terminate TLS using the site's standard certificate-management process.
+If the web client is exposed externally, use HTTPS and the normal certificate lifecycle for the site.
+
+## Monitoring
+
+The production host already includes PostgreSQL metrics collection:
+
+```text
+postgres_exporter.service
+```
+
+It also has a dedicated 1C metrics timer/service pair.
+
+For a mature deployment, monitor at least:
+
+```text
+PostgreSQL availability
+connections
+transactions / locks
+WAL / checkpoint pressure
+database size
+1C server process availability
+1C cluster ports
+Apache availability
+HTTP response from the publication endpoint
+host CPU / RAM / storage latency
+```
+
+Monitoring should detect backend degradation, not just whether Apache still returns an HTTP response.
 
 ## Validation sequence
 
-Validate each layer independently.
+Validate every layer separately.
 
-### PostgreSQL
+Postgres Pro:
 
 ```bash
-systemctl --no-pager --type=service | grep -Ei 'postgres|pgpro'
+systemctl is-active postgrespro-1c-17
+psql --version
 ss -lntp | grep 5432
 ```
 
-Then test authentication from the 1C server using an approved database client/account.
-
-### 1C server
+1C server:
 
 ```bash
-systemctl list-units --type=service | grep -Ei '1c|srv1cv8'
+systemctl status 'srv1cv8-8.3.27.2325@default.service' --no-pager
 ss -lntp | grep -E ':(1540|1541)\b'
 ```
 
-Confirm the infobase opens from a normal 1C client before testing Apache.
-
-### Apache
+Apache:
 
 ```bash
 apachectl configtest
@@ -378,76 +402,50 @@ systemctl is-active httpd
 curl -I http://127.0.0.1/
 ```
 
-### Web publication
-
-Test the actual publication URI and perform a real application login. A successful HTTP 200/302 response alone is not enough.
+Finally, test the actual publication URI and perform a real 1C application login. HTTP 200/302 alone is not sufficient validation.
 
 ## Backup and rollback
 
-Before production cutover define independent recovery paths for all three layers.
+Treat all three layers independently.
 
-### Database
-
-Use a supported PostgreSQL/Postgres Pro backup method appropriate for the database size and RPO:
+Database recovery may use:
 
 ```text
 logical dump for small/simple cases
 physical/base backup for larger production databases
-WAL/archive strategy when point-in-time recovery is required
+WAL/archive when point-in-time recovery is required
 ```
 
-### 1C configuration
-
-Keep copies of:
+Also preserve:
 
 ```text
-1C platform package/build information
-/etc or service overrides related to 1C
+1C platform build/package information
+1C service overrides
 cluster administration settings
 infobase registration details
-custom scripts
+Apache configuration
+web publication directories
+custom monitoring scripts
 ```
 
-### Apache
-
-Back up the Apache configuration and publication directories before rerunning `webinst` or changing versions.
-
-Rollback should be possible without reinstalling the entire stack under time pressure.
+Do not combine a 1C platform upgrade, Postgres Pro major upgrade and Apache redesign into one rollback unit.
 
 ## Common mistakes
 
-Avoid these patterns:
+Avoid:
 
-- installing stock PostgreSQL without checking 1C support;
-- initializing PostgreSQL with the wrong locale;
-- exposing TCP/5432 broadly;
-- using `webinst` from a different 1C platform version;
-- copying Apache publication files between mismatched versions;
-- disabling SELinux instead of fixing access policy;
-- opening every 1C port to every network;
-- treating a successful Apache page as proof that the infobase is healthy;
-- upgrading the 1C platform, PostgreSQL and Apache simultaneously without a rollback boundary.
-
-## What to capture from a real deployment
-
-To promote this note from `lab` to `current`, collect the actual non-secret versions and service layout:
-
-```bash
-cat /etc/os-release | grep -E '^(PRETTY_NAME|VERSION_ID)='
-httpd -v
-rpm -qa | grep -Ei '1c|1cv8' | sort
-systemctl list-unit-files | grep -Ei '1c|srv1cv8'
-systemctl --no-pager --type=service | grep -Ei 'postgres|pgpro'
-```
-
-For the database, capture the exact product/version separately without publishing credentials.
-
-Once those values are confirmed on the working server, the metadata and commands can be tightened to the real production implementation.
+- using stock PostgreSQL without checking 1C compatibility;
+- initializing the database under the wrong locale;
+- exposing 5432 broadly;
+- using `webinst` from the wrong installed 1C build;
+- disabling SELinux instead of fixing policy;
+- opening the entire 1C port range to every network;
+- treating a working Apache page as proof that the infobase is healthy;
+- changing 1C, Postgres Pro and Apache simultaneously without independent rollback points.
 
 ## References
 
 - 1C:Enterprise web publication on Linux / Apache 2.4: <https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.27_Administrator_Guide/Chapter_8.Setting_up_web_services_for_1C_Enterprise/8.4._Setting_up_client_application_support/8.4.2._On_Linux/>
 - 1C `webinst` utility: <https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.27_Administrator_Guide/Chapter_8.Setting_up_web_services_for_1C_Enterprise/8.3._Publication_types/8.3.3._Webinst_utility/>
-- 1C general web publication procedure: <https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.22_Administrator_Guide/Chapter_8._Setting_up_web_services_for_1C_Enterprise/8.3._Publication_types/8.3.1._General_publication_procedure/>
-- Postgres Pro configuration for 1C: <https://postgrespro.ru/docs/enterprise/16/config-one-c>
+- Postgres Pro configuration for 1C: <https://postgrespro.ru/docs/enterprise/17/config-one-c>
 - Postgres Pro Linux installation/support matrix: <https://postgrespro.ru/docs/enterprise/17/binary-installation-on-linux>
