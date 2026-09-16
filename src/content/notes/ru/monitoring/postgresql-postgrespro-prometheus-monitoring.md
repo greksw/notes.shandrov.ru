@@ -6,7 +6,7 @@ tags: ["postgresql", "postgres-pro", "prometheus", "postgres-exporter", "grafana
 published: 2026-09-16
 updated: 2026-09-16
 status: current
-testedOn: ["AlmaLinux 9.8", "Postgres Pro 1C 17.10", "postgres_exporter", "Prometheus", "Grafana"]
+testedOn: ["AlmaLinux 9.8", "Postgres Pro 1C 17.10", "postgres_exporter systemd deployment", "Prometheus", "Grafana"]
 featured: true
 lang: ru
 translationKey: "monitoring/postgresql-postgrespro-prometheus-monitoring"
@@ -16,126 +16,195 @@ translationKey: "monitoring/postgresql-postgrespro-prometheus-monitoring"
 
 Обычный мониторинг Linux показывает CPU, память, файловые системы и сеть, но этого недостаточно для диагностики большинства проблем на уровне СУБД.
 
-Для PostgreSQL/Postgres Pro нужны собственные метрики БД:
+В production-стеке 1С сервер БД работает на AlmaLinux 9.8 с Postgres Pro 1C 17.10 и отдаёт метрики через отдельный `postgres_exporter.service` в Prometheus и Grafana.
+
+Поэтому мониторинг разделён на два уровня:
 
 ```text
-соединения
-транзакционная активность
-блокировки
-статистика активности и кеша
-размер баз
-checkpoint/background writer
-репликация, если используется
+метрики Linux -> CPU / RAM / filesystem / network
+метрики PostgreSQL -> sessions / transactions / locks / checkpoints / DB state
 ```
 
-В production-стеке 1С сервер БД работает на AlmaLinux 9.8 с Postgres Pro 1C 17.10, а метрики PostgreSQL уже собираются отдельным сервисом `postgres_exporter`.
+Рабочий Linux-хост ещё не означает здоровую БД.
 
-Поэтому exporter рассматривается как самостоятельный источник сигналов, а не как дополнение к проверке наличия процесса `postgres`.
-
-## Production baseline
-
-Подтверждённый стек:
+## Подтверждённый production baseline
 
 ```text
 OS: AlmaLinux 9.8
 Database: Postgres Pro 1C 17.10
+Database listener for exporter: loopback
 Exporter service: postgres_exporter.service
+Exporter port: 9187
 Metrics backend: Prometheus
 Visualization: Grafana
 ```
 
-Точную версию самого exporter и текущий datasource/config я здесь намеренно не утверждаю, пока они не сняты с работающего сервера.
+Точную версию бинарника `postgres_exporter` не утверждаю: на работающем сервере вызов `postgres_exporter --version` не вернул строку версии.
 
-## Слои мониторинга
+## Реальная схема systemd
 
-Полезная схема выглядит так:
+Exporter работает от отдельной непривилегированной учётной записи:
 
-```text
-Linux host metrics
-       |
-       +--> CPU / RAM / filesystem / network
-       |
-       v
-PostgreSQL exporter
-       |
-       +--> database/session/activity metrics
-       |
-       v
-Prometheus
-       |
-       v
-Grafana
+```ini
+[Service]
+Type=simple
+User=postgres_exporter
+Group=postgres_exporter
 ```
 
-Эти два источника отвечают на разные вопросы.
+Подключение к БД локальное:
 
-Host monitoring покажет, что сервер упёрся в CPU. PostgreSQL metrics помогут понять, связано ли это с ростом соединений, транзакционной активностью, блокировками или другой нагрузкой БД.
+```ini
+Environment="DATA_SOURCE_URI=127.0.0.1:5432/postgres?sslmode=disable"
+Environment="DATA_SOURCE_USER=postgres_exporter"
+Environment="DATA_SOURCE_PASS_FILE=/etc/postgres_exporter/password"
+```
 
-## Сначала проверяем существующий production service
+Это даёт несколько полезных свойств:
 
-Перед изменением конфигурации:
+- пароль не передаётся в `ExecStart`;
+- secret хранится в отдельном файле;
+- exporter подключается к PostgreSQL по loopback;
+- доступ к PostgreSQL и к exporter можно ограничивать независимо.
+
+Содержимое `/etc/postgres_exporter/password` в Git и документацию не публикуется. Права на файл должны оставаться минимально необходимыми.
+
+## Фактический запуск exporter
+
+Production unit запускает:
+
+```bash
+/usr/local/bin/postgres_exporter \
+  --config.file= \
+  --web.listen-address=<db-host-ip>:9187 \
+  --collector.database_wraparound \
+  --collector.long_running_transactions \
+  --collector.postmaster \
+  --collector.stat_checkpointer \
+  --no-collector.stat_replication
+```
+
+Внутренний IP в публичной статье намеренно заменён placeholder'ом.
+
+Unit явно задаёт пустой `--config.file=` и использует environment variables для параметров подключения к БД.
+
+Включены collectors:
+
+```text
+database_wraparound
+long_running_transactions
+postmaster
+stat_checkpointer
+```
+
+Сбор replication metrics отключён:
+
+```text
+--no-collector.stat_replication
+```
+
+Collector имеет смысл включать тогда, когда за ним стоит конкретный эксплуатационный вопрос или alert, а не просто потому, что он существует.
+
+## Сетевой listener
+
+Exporter не слушает `0.0.0.0`.
+
+Он привязан к одному внутреннему адресу:
+
+```text
+<db-host-ip>:9187
+```
+
+Проверка:
+
+```bash
+ss -lntp | grep -E ':9187\b|postgres_exporter'
+```
+
+Это лучше, чем публикация endpoint на всех интерфейсах. При этом firewall всё равно должен разрешать TCP/9187 только со стороны Prometheus.
+
+## Порядок запуска сервисов
+
+Unit содержит:
+
+```ini
+After=network-online.target postgrespro-1c-17.service
+Wants=network-online.target
+```
+
+То есть exporter запускается после поднятия сети и сервиса Postgres Pro 1C 17.
+
+Это правильный порядок, но он не заменяет runtime-проверку: после рестарта БД нужно убедиться, что exporter снова успешно собирает metrics.
+
+## Hardening systemd
+
+Production unit уже достаточно жёстко ограничен:
+
+```ini
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+```
+
+Для exporter это подходящая модель: ему не нужны elevated capabilities, доступ к kernel modules или возможность писать по всей файловой системе.
+
+Если будущий collector потребует дополнительных прав, их лучше добавлять точечно, а не ослаблять unit заранее.
+
+## Проверка работающего exporter
+
+Состояние сервиса:
 
 ```bash
 systemctl status postgres_exporter --no-pager
 systemctl is-enabled postgres_exporter
 ```
 
-Далее смотрим реальный unit:
+Эффективный unit:
 
 ```bash
 systemctl cat postgres_exporter
 ```
 
-Это важно, потому что exporter может получать настройки через:
-
-```text
-EnvironmentFile
-systemd drop-in
-wrapper script
-command-line flags
-```
-
-Не публикуйте credentials из unit или environment-файлов.
-
-## Проверяем listener exporter
-
-Находим реальный socket:
+Listener:
 
 ```bash
-ss -lntp | grep -i postgres_exporter
+ss -lntp | grep -E ':9187\b|postgres_exporter'
 ```
 
-Если имени процесса не видно:
+Так как exporter привязан к внутреннему адресу, а не к loopback, endpoint нужно проверять по этому адресу из разрешённого monitoring path:
 
 ```bash
-ps -ef | grep '[p]ostgres_exporter'
+curl -fsS http://<db-host-ip>:9187/metrics | head
 ```
 
-Часто используется порт `9187`, но в эксплуатационной документации лучше фиксировать фактическую конфигурацию, а не предполагать default.
-
-## Проверяем endpoint локально
-
-После того как адрес/порт известны:
-
-```bash
-curl -fsS http://127.0.0.1:9187/metrics | head
-```
-
-Если в production используется другой порт, подставьте его.
-
-Успешный ответ означает только доступность exporter endpoint. Это ещё не доказывает, что запросы к БД выполняются без ошибок.
-
-Смотрим журнал:
+После этого смотрим журнал:
 
 ```bash
 journalctl -u postgres_exporter -n 100 --no-pager
 ```
 
-## Учётная запись БД для мониторинга
+Доступный `/metrics` подтверждает только работу HTTP endpoint. Повторяющиеся ошибки database collection всё равно означают неисправный monitoring path.
 
-Для exporter нужна отдельная БД-учётка с минимально необходимыми правами.
+## Учётная запись БД
 
-Не используйте повторно:
+Exporter использует отдельную DB account:
+
+```text
+postgres_exporter
+```
+
+Ей нужны только права, необходимые включённым collectors.
+
+Не нужно переиспользовать:
 
 ```text
 учётку приложения
@@ -143,31 +212,11 @@ postgres superuser
 учётку сервиса 1С
 ```
 
-Пароль не должен попадать в Git, документацию и открытые shell scripts.
+По возможности используйте штатные monitoring roles PostgreSQL/Postgres Pro и добавляйте только те grants, которые реально нужны custom queries.
 
-В зависимости от версии PostgreSQL/Postgres Pro и включённых collectors можно использовать штатные monitoring roles и точечные дополнительные grants для custom queries.
+## Prometheus scrape model
 
-Конкретные права нужно проверять по реально установленной версии exporter и набору запросов.
-
-## Не публикуем exporter наружу
-
-Нормальная схема:
-
-```text
-Prometheus -> postgres_exporter
-users      -X-> postgres_exporter
-Internet   -X-> postgres_exporter
-```
-
-Ограничьте listen address и/или firewall так, чтобы endpoint был доступен только со стороны Prometheus.
-
-Если Prometheus расположен на том же сервере — достаточно loopback.
-
-Если удалённо — разрешайте только monitoring host/network.
-
-## Scrape job Prometheus
-
-Минимальный пример:
+Обезличенный пример:
 
 ```yaml
 scrape_configs:
@@ -180,211 +229,143 @@ scrape_configs:
           role: database
 ```
 
-В публичной статье используйте обезличенные DNS names.
-
-Для multi-site инфраструктуры полезны стабильные labels:
-
-```text
-site
-role
-service
-environment
-```
-
-Не помещайте в labels имена БД, SQL-текст, usernames и другие значения с высокой кардинальностью.
-
-## Проверка Prometheus
-
-Перед reload/restart:
+Перед применением изменений:
 
 ```bash
 promtool check config /etc/prometheus/prometheus.yml
 ```
 
-После применения конфигурации проверьте, что target в Prometheus имеет состояние `UP`.
-
-На уровне запросов убедитесь, что приходят реальные PostgreSQL metrics, а exporter не сообщает постоянные ошибки collection.
-
-Не копируйте dashboard queries вслепую из другого exporter release: названия metrics и collectors могут отличаться.
+После reload/restart проверьте `UP` target и то, что DB metrics действительно меняются во времени.
 
 ## Что мониторить
 
-### Соединения
+### Connections и long-running transactions
 
-Главные вопросы:
+Следите за числом сессий относительно реального `max_connections` и за аномальным ростом.
 
-```text
-сколько сессий открыто?
-насколько близко значение к max_connections?
-есть ли аномальный рост соединений?
-```
+Collector `long_running_transactions` важен, потому что долгие транзакции могут удерживать locks, мешать cleanup и увеличивать bloat.
 
-График connections имеет смысл только вместе с реальным `max_connections` и пониманием поведения приложения.
+### Transaction activity и locks
 
-### Транзакционная активность
+Сопоставляйте transaction rate и contention с CPU/I/O сервера и ошибками приложения.
 
-Следите за transaction/activity rate и формируйте baseline обычной нагрузки.
+Медленная 1С может упираться в БД, но также в storage, сеть или application tier.
 
-Аномально низкая активность тоже может быть проблемой, если в это время приложение обычно активно.
+### Checkpoints
 
-### Блокировки
+Collector `stat_checkpointer` даёт видимость checkpoint activity.
 
-Locks помогают отличить общее замедление приложения от contention внутри БД.
+Эти метрики полезно коррелировать со storage latency и write pressure, а не оценивать отдельно.
 
-Во время инцидента полезно сопоставлять их с:
+### Postmaster state
 
-```text
-application errors
-query latency, если собирается
-CPU / I/O pressure
-ростом соединений
-```
+Collector `postmaster` позволяет контролировать состояние основного процесса PostgreSQL на уровне БД, а не только факт открытого TCP-порта.
 
-### Размер БД
+### Transaction ID wraparound
 
-Рост базы важен для capacity planning, но не заменяет контроль свободного места на файловой системе.
+`database_wraparound` нужен для контроля риска exhaustion/wraparound transaction IDs — это типичный пример состояния, которое невозможно качественно увидеть через обычный Linux monitoring.
 
-Нужно видеть оба показателя:
+### Replication
 
-```text
-logical DB growth
-filesystem/storage capacity
-```
+В текущем unit replication collector отключён.
 
-### Cache/activity statistics
-
-PostgreSQL предоставляет статистику, полезную для анализа изменений workload.
-
-Лучше смотреть её как тренд. Один коэффициент без контекста редко даёт полноценный диагноз производительности.
-
-### Checkpoints и write activity
-
-Метрики checkpoint/background writer помогают сопоставлять write pressure со storage latency и замедлениями приложения.
-
-Особенно полезно смотреть их на том же временном диапазоне, что CPU, disk и storage metrics.
-
-### Репликация
-
-Если replication используется, мониторьте отдельно:
-
-```text
-доступность replica
-lag
-WAL/replay progress
-replication slots, если используются
-```
-
-Не создавайте alerts по replication там, где её нет.
+Если позже появится репликация, сначала нужно определить нормальные значения lag/slot/replay state, а затем включать соответствующий collector и alerts.
 
 ## Структура Grafana dashboard
-
-Database dashboard должен отвечать на эксплуатационные вопросы, а не показывать все metrics подряд.
 
 Полезная структура:
 
 ```text
 Overview
-  -> exporter/DB availability
+  -> exporter / DB availability
   -> connections
-  -> transaction/activity rate
-  -> locks
-  -> database size
-  -> checkpoints/write activity
-  -> host CPU/RAM/storage
-  -> replication, если используется
+  -> long-running transactions
+  -> transaction activity
+  -> locks / contention
+  -> checkpoint activity
+  -> wraparound risk
+  -> host CPU / RAM / storage
 ```
 
-Host panels лучше держать рядом с PostgreSQL panels — так проще увидеть, проблема находится в СУБД или ниже, на уровне ресурсов сервера/storage.
+Host panels лучше держать рядом с DB panels, чтобы сразу было видно, проблема находится в PostgreSQL или ниже, на уровне ресурсов сервера.
 
 ## Alerting
 
-Не нужно alert'ить на факт любого изменения metric.
-
-Полезнее actionable conditions:
+Полезнее alert'ить на actionable conditions:
 
 ```text
 exporter недоступен
 PostgreSQL недоступен
 connections приближаются к лимиту
-длительное состояние блокировок/contention
-рост БД или filesystem к критической ёмкости
-replication lag выше допустимого окна
+long-running transactions превышают допустимое время
+длительное lock/contention состояние
+checkpoint/write pressure выходит за baseline
+растёт риск transaction ID wraparound
+filesystem/storage приближается к заполнению
 ```
 
-Пороги должны исходить из реальной нагрузки и maintenance model, а не из случайного импортированного dashboard.
+Пороги должны основываться на реальной нагрузке 1С и maintenance model.
 
 ## Граница с мониторингом 1С
 
-Эта БД обслуживает 1С, но мониторинг PostgreSQL и мониторинг 1С — разные уровни.
+PostgreSQL monitoring не доказывает здоровье application tier 1С.
 
-PostgreSQL metrics не доказывают, что:
+Он не отвечает напрямую на вопросы:
 
 ```text
-процессы сервера 1С работают корректно
-запущен нужный instance платформы
-информационная база доступна пользователю
-операции на уровне приложения выполняются успешно
+запущен ли нужный instance 1С
+доступна ли информационная база пользователям
+выполняются ли операции приложения
+здоров ли кластер 1С
 ```
 
-В production уже используется отдельный сервис/таймер метрик 1С. Эти сигналы нужно описывать в отдельной статье по мониторингу 1С.
+На production-хосте уже есть отдельный сервис/таймер метрик 1С, поэтому application-level monitoring нужно описывать отдельно.
 
 ## Безопасность
 
-Для exporter:
+Текущая модель уже правильно разделяет доступ:
 
-- отдельная monitoring DB account;
-- никаких паролей в Git;
-- ограниченный listener;
-- по возможности не передавать secrets через process arguments;
-- environment/config files с ограниченными правами;
-- endpoint exporter не должен быть доступен из Internet;
-- TCP/5432 ограничивается независимо от exporter.
+- отдельный OS user `postgres_exporter`;
+- отдельная PostgreSQL monitoring account;
+- пароль в `/etc/postgres_exporter/password`, а не в `ExecStart`;
+- подключение exporter -> PostgreSQL по loopback;
+- exporter слушает только один внутренний IP;
+- TCP/9187 разрешается только monitoring path;
+- TCP/5432 ограничивается отдельно;
+- systemd hardening сохраняется, пока нет обоснованной причины его ослабить.
 
-Monitoring не должен превращаться в альтернативный административный доступ к СУБД.
+Monitoring не должен становиться вторым административным каналом в БД.
 
 ## Backup и rollback
 
-Изменения monitoring не должны затрагивать production schema БД без отдельной необходимости конкретного collector.
-
-Перед изменением существующего exporter сохраняйте:
+Перед изменением exporter сохраняйте:
 
 ```text
-systemd unit / drop-ins
-exporter environment/config
+/etc/systemd/system/postgres_exporter.service
+metadata/permissions /etc/postgres_exporter/password
 Prometheus scrape config
-custom query files, если есть
-Grafana dashboard JSON/provisioning
+Grafana dashboards/provisioning
 alert rules
 ```
 
-Rollback должен означать возврат предыдущей конфигурации monitoring, а не изменения в application database.
+Сам пароль копировать в Git или документацию не нужно.
+
+Rollback должен возвращать предыдущую monitoring configuration и не затрагивать application database.
 
 ## Проверка после изменений
 
 ```text
-[ ] postgres_exporter active
-[ ] endpoint доступен только по разрешённому monitoring path
-[ ] в journal нет постоянных ошибок collection
+[ ] postgres_exporter.service active
+[ ] exporter работает от postgres_exporter user/group
+[ ] подключение к PostgreSQL остаётся на loopback
+[ ] password file-backed и не находится в ExecStart
+[ ] exporter слушает только нужный внутренний адрес:9187
+[ ] firewall ограничивает 9187 monitoring path
+[ ] в journal нет повторяющихся collection errors
 [ ] Prometheus target = UP
-[ ] PostgreSQL metrics присутствуют
-[ ] labels корректно идентифицируют host/site/service
-[ ] Grafana показывает свежие меняющиеся данные
-[ ] alert rules можно безопасно протестировать
+[ ] DB metrics меняются
+[ ] Grafana показывает свежие данные
 ```
-
-## Что ещё снять с production
-
-Чтобы сделать статью полностью implementation-specific, достаточно снять не секретные детали:
-
-```bash
-postgres_exporter --version 2>/dev/null || true
-systemctl cat postgres_exporter
-ss -lntp | grep -E ':9187\b|postgres_exporter'
-```
-
-И отдельно — обезличенный scrape job из Prometheus.
-
-Не публикуйте database password и connection string с credentials.
 
 ## Ссылки
 
