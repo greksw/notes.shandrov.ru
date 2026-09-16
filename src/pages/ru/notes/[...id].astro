@@ -1,0 +1,32 @@
+---
+import { getCollection, render } from 'astro:content';
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+
+export async function getStaticPaths() {
+  const notes = await getCollection('notes', ({ data }) => data.lang === 'ru');
+  return notes.map((note) => {
+    const id = note.id.replace(/^ru\//, '');
+    const alternateHref = note.data.translationKey ? `/notes/${note.data.translationKey}/` : '/';
+    return { params: { id }, props: { note, alternateHref } };
+  });
+}
+
+const { note, alternateHref } = Astro.props;
+const { Content } = await render(note);
+---
+
+<BaseLayout title={`${note.data.title} · Tudor Shandrov`} description={note.data.description} lang="ru" alternateHref={alternateHref}>
+  <article class="article">
+    <a href="/ru/notes/">← Все заметки</a>
+    <div class="eyebrow" style="margin-top:32px">{note.data.category}</div>
+    <h1>{note.data.title}</h1>
+    <p class="lead">{note.data.description}</p>
+    <div class="note-meta meta">
+      <span>Статус: {note.data.status}</span>
+      <span>Опубликовано: {note.data.published.toISOString().slice(0,10)}</span>
+      <span>Обновлено: {note.data.updated.toISOString().slice(0,10)}</span>
+    </div>
+    {note.data.testedOn.length > 0 && <p class="notice"><strong>Проверено на:</strong> {note.data.testedOn.join(' · ')}</p>}
+    <Content />
+  </article>
+</BaseLayout>
