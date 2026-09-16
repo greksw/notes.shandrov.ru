@@ -1,6 +1,6 @@
 ---
-title: "Proxmox VE: сбор evidence перед перезагрузкой зависшей Windows VM"
-description: "Production-runbook incident response для сохранения host, QEMU, task и storage evidence до reset или reboot неотвечающей Windows VM."
+title: "Proxmox VE: сбор диагностических данных перед перезагрузкой зависшей Windows VM"
+description: "Runbook реагирования на инцидент: как сохранить данные Proxmox, QEMU, задач и storage до reset или reboot неотвечающей Windows VM."
 category: "Proxmox и виртуализация"
 tags: ["proxmox", "windows", "incident-response", "qemu", "troubleshooting", "forensics"]
 published: 2026-09-16
@@ -14,31 +14,31 @@ translationKey: "proxmox/proxmox-windows-vm-freeze-evidence-collection"
 
 ## Контекст
 
-Зависшая Windows VM создаёт давление на инженера: сервис нужно вернуть как можно быстрее. Но немедленный reboot уничтожает часть наиболее полезных evidence.
+Когда Windows VM зависает, естественное желание — как можно быстрее перезапустить её и вернуть сервис. Но немедленный reboot или reset уничтожает часть диагностических данных, которые могли бы объяснить причину отказа.
 
-Первый правильный вопрос — не «как её перезапустить?», а «что ещё можно зафиксировать до изменения состояния?».
+Первый вопрос должен быть не «как её перезапустить?», а «что можно успеть зафиксировать до изменения состояния?».
 
-Этот runbook сфокусирован на стороне Proxmox. Он рассчитан на ситуацию, когда Windows guest перестал отвечать полностью или частично, но сам Proxmox node всё ещё доступен.
+Этот runbook посвящён стороне Proxmox. Он рассчитан на ситуацию, когда Windows guest перестал отвечать полностью или частично, но сам Proxmox node остаётся доступен.
 
-Примеры используют обезличенные VMID и временные интервалы. Замените их фактическими данными инцидента.
+Примеры используют обезличенные VMID и временные интервалы. Подставляйте фактические данные инцидента.
 
-## Цели
+## Что нужно выяснить
 
-До reboot или reset гостя постарайтесь сохранить данные, позволяющие ответить на вопросы:
+До reboot или reset постарайтесь собрать данные, которые помогут ответить:
 
-- проблема ограничена одной VM или host испытывал более широкую нагрузку;
-- оставался ли QEMU process жив;
-- зафиксировал ли Proxmox stop, reset, migration или backup tasks около времени инцидента;
-- были ли на host OOM, hung task, blocked I/O, timeout или storage errors;
-- продолжала ли VM потреблять CPU или QEMU был заблокирован в kernel I/O;
-- совпал ли freeze по времени с backup, migration или storage activity;
-- восстановился ли guest после clean shutdown или только после hard reset.
+- проблема затронула только одну VM или весь host;
+- жив ли QEMU process;
+- были ли рядом по времени backup, migration, snapshot, stop или reset tasks;
+- есть ли на host признаки OOM, hung task, blocked I/O, timeout или storage errors;
+- продолжает ли VM потреблять CPU или QEMU ждёт I/O;
+- совпадает ли freeze со storage activity;
+- удалось ли восстановить guest штатным shutdown или потребовался hard reset.
 
-Не превращайте сбор evidence в длительный outage. Цель — компактный и повторяемый capture до уничтожения состояния.
+Сбор данных не должен превращаться в длительный outage. Цель — короткий, повторяемый набор действий перед восстановлением сервиса.
 
-## Первое правило: зафиксируйте окно инцидента
+## Зафиксируйте окно инцидента
 
-Запишите наиболее вероятное время начала и время подтверждения проблемы.
+Запишите наиболее вероятное время начала проблемы и время её подтверждения.
 
 Пример:
 
@@ -49,13 +49,11 @@ vmid=522
 node=pve-node09
 ```
 
-Даже приблизительный интервал полезен. Позже он позволит сопоставить сообщения пользователей, Proxmox tasks, QEMU logs и host-level warnings.
+Даже приблизительный интервал полезен. Он позволяет позже сопоставить обращения пользователей, Proxmox tasks, QEMU, journal и storage events.
 
-Используйте один и тот же временной интервал во всех этапах расследования.
+## Подтвердите VM и текущий node
 
-## Подтвердите VM и node
-
-С любого cluster node:
+С любого узла кластера:
 
 ```bash
 pvesh get /cluster/resources --type vm | grep -E '(^|[[:space:]])522([[:space:]]|$)'
@@ -68,22 +66,24 @@ qm status 522
 qm config 522
 ```
 
-Сохраните конфигурацию до любых изменений. Особенно важны:
+Сохраните конфигурацию до любых изменений.
+
+Особенно важны:
 
 - machine type;
-- CPU type и количество vCPU;
-- memory и ballooning settings;
-- storage backend и disk format;
-- выбранный VirtIO/SCSI controller;
+- CPU type и vCPU;
+- memory и ballooning;
+- storage backend;
+- VirtIO/SCSI controller;
 - network model;
-- QEMU Guest Agent configuration;
-- watchdog configuration, если используется.
+- QEMU Guest Agent;
+- watchdog, если используется.
 
-Не считайте, что VM находится на node, где она обычно работает. Сначала подтвердите текущего владельца.
+Не предполагайте, что VM находится на привычном узле. Сначала подтвердите фактический hosting node.
 
-## Зафиксируйте состояние cluster и node
+## Зафиксируйте состояние кластера и host
 
-Freeze гостя может быть симптомом host или storage problem, поэтому сначала сохраните состояние всей платформы.
+Freeze одной VM может быть симптомом общей проблемы host или storage.
 
 ```bash
 pvecm status
@@ -96,7 +96,7 @@ pvesm status
 ceph -s
 ```
 
-Зафиксируйте базовую нагрузку host:
+Базовая нагрузка host:
 
 ```bash
 uptime
@@ -104,7 +104,7 @@ free -h
 df -h
 ```
 
-Для быстрого просмотра scheduler и I/O pressure:
+Быстрый снимок scheduler и I/O pressure:
 
 ```bash
 vmstat 1 5
@@ -116,11 +116,11 @@ vmstat 1 5
 iostat -xz 1 5
 ```
 
-Задача не в том, чтобы немедленно доказать root cause. Нужно сохранить факт: host выглядел нормально или был перегружен в тот же момент, когда завис guest.
+Цель — зафиксировать, выглядел ли host нормально или одновременно испытывал нагрузку.
 
-## Убедитесь, что QEMU process существует
+## Проверьте QEMU process
 
-VM может отображаться как `running` в Proxmox, при этом её userspace process уже находится в ненормальном состоянии или ждёт нижележащий слой.
+VM может отображаться как `running`, хотя QEMU process уже работает ненормально или ждёт нижележащий I/O.
 
 Найдите process:
 
@@ -128,34 +128,32 @@ VM может отображаться как `running` в Proxmox, при эт�
 pgrep -af 'kvm.*-id 522|qemu-system.*-id 522'
 ```
 
-Или проверьте PID file:
+Или PID file:
 
 ```bash
 cat /run/qemu-server/522.pid 2>/dev/null
 ```
 
-Затем исследуйте process:
+Затем:
 
 ```bash
 PID="$(cat /run/qemu-server/522.pid 2>/dev/null)"
 ps -o pid,ppid,stat,etime,%cpu,%mem,wchan:32,cmd -p "$PID"
 ```
 
-Process state и `wchan` особенно полезны, когда QEMU заблокирован в kernel I/O вместо обычного потребления CPU.
+`stat` и `wchan` могут показать, что QEMU не нагружает CPU, а заблокирован в kernel I/O.
 
-Не подключайте debugger и не отправляйте signals как первый шаг, если инцидент не требует более глубокого live analysis. Начинайте с read-only inspection.
+Не начинайте с debugger или signals. Сначала собирайте данные без изменения состояния VM.
 
-## Сохраните историю Proxmox tasks
+## Проверьте историю задач Proxmox
 
-Найдите операции с VM около окна инцидента.
-
-Для недавней активности удобен cluster task query:
+Для недавней активности:
 
 ```bash
 pvesh get /cluster/tasks --vmid 522 --limit 50
 ```
 
-Ищите:
+Ищите операции:
 
 - `qmstart`;
 - `qmstop`;
@@ -167,13 +165,13 @@ pvesh get /cluster/tasks --vmid 522 --limit 50
 - storage migration;
 - replication.
 
-Если task выглядит связанным с инцидентом, зафиксируйте его UPID и сохраните task log до reboot гостя.
+Если задача выглядит связанной с инцидентом, сохраните UPID и её log до перезапуска гостя.
 
-Корреляция tasks важна: кажущийся «случайным» freeze может совпасть по времени с backup, migration или storage operation, о которых после восстановления сервиса легко забыть.
+Корреляция по времени часто помогает обнаружить связь между freeze и backup/migration/storage activity.
 
-## Проверьте host journal по VM и QEMU
+## Проверьте systemd journal
 
-Начинайте с узкого временного окна.
+Сначала работайте с узким окном.
 
 ```bash
 journalctl \
@@ -183,7 +181,7 @@ journalctl \
 grep -Ei 'VM 522|:522:|qemu.?522|qm(stop|shutdown|reset|start).*522'
 ```
 
-Затем в том же интервале ищите host-level failure indicators:
+Затем ищите host-level failures:
 
 ```bash
 journalctl \
@@ -193,13 +191,9 @@ journalctl \
 grep -Ei 'watchdog|oom|out of memory|hung task|blocked for more than|i/o error|input/output error|timeout|reset|nvme|scsi|rbd|ceph|nfs|zfs'
 ```
 
-Не начинайте с поиска по всему journal. Узкое окно уменьшает нерелевантный шум и делает последующий incident review воспроизводимым.
+Узкий временной интервал уменьшает шум и упрощает повторный анализ.
 
-## Отдельно исследуйте kernel messages
-
-Kernel-level симптомы особенно важны для storage stalls, driver problems и OOM events.
-
-Для текущей загрузки:
+## Отдельно проверьте kernel journal
 
 ```bash
 journalctl -k \
@@ -208,7 +202,7 @@ journalctl -k \
   --no-pager
 ```
 
-Или отфильтруйте вероятные признаки:
+Или только вероятные признаки:
 
 ```bash
 journalctl -k \
@@ -218,11 +212,9 @@ journalctl -k \
 grep -Ei 'oom|hung|blocked|i/o|timeout|reset|nvme|scsi|rbd|ceph|nfs|zfs'
 ```
 
-Если после инцидента reboot выполнялся уже на самом host, при необходимости исследуйте предыдущую загрузку через `journalctl -b -1`.
+Если host уже перезагружался после инцидента, при необходимости изучите предыдущую загрузку через `journalctl -b -1`.
 
-## Проверьте OOM evidence
-
-Если QEMU process был убит host OOM killer, внешне это может выглядеть как guest-side outage, хотя реальная причина — memory pressure на host.
+## Проверьте OOM
 
 ```bash
 journalctl \
@@ -232,30 +224,26 @@ journalctl \
 grep -Ei 'oom-killer|out of memory|killed process.*qemu|killed process.*kvm'
 ```
 
-Также сопоставьте memory configuration VM с фактическим состоянием host.
+Если QEMU был убит OOM killer, проблема находится на host, а не обязательно внутри Windows.
 
-Если используется ballooning, зафиксируйте это. Не считайте настроенный maximum memory единственным значимым параметром памяти для инцидента.
+При включённом ballooning учитывайте фактическое распределение памяти, а не только configured maximum.
 
-## Проверьте blocked I/O и hung tasks
+## Ищите blocked I/O и hung tasks
 
-Windows guest может выглядеть полностью зависшим, когда QEMU ждёт storage, а не когда сама Windows crashed.
+Windows VM может выглядеть полностью зависшей, когда QEMU ждёт storage.
 
-Host evidence может содержать сообщения вида:
+Характерные признаки:
 
-- task blocked for more than N seconds;
+- `task blocked for more than ...`;
 - I/O timeout;
 - SCSI/NVMe reset;
 - RBD/Ceph timeout;
-- NFS server not responding;
+- `NFS server not responding`;
 - filesystem или block-device errors.
 
-Ищите эти признаки в окне инцидента до reset VM.
+Если похожие симптомы одновременно появились у нескольких VM на одном datastore, смещайте фокус с Windows на storage path.
 
-Если похожие симптомы одновременно видны у нескольких VM на одном datastore, переносите фокус расследования на storage path, а не рассматривайте каждый guest как отдельную Windows problem.
-
-## Проверьте пересечение со storage и backup activity
-
-Если VM disks находятся на shared storage, сохраните состояние backend, пока freeze ещё воспроизводится.
+## Проверьте пересечение с backup и storage activity
 
 Для Proxmox storage:
 
@@ -269,128 +257,114 @@ pvesm status
 ceph -s
 ```
 
-Для mounted NFS datastore:
+Для NFS:
 
 ```bash
 findmnt -t nfs,nfs4
 ```
 
-Проверьте, не совпал ли инцидент с backup или migration task. Высокая I/O activity сама по себе не доказывает causation, но потеря временной корреляции сильно ослабляет дальнейший analysis.
+Сам факт активного backup не доказывает причину. Но временную корреляцию нужно сохранить до reboot.
 
-## Проверяйте QEMU Guest Agent, но не полагайтесь только на него
+## QEMU Guest Agent — полезный сигнал, но не доказательство
 
-Если guest agent включён, его responsiveness — полезный signal:
+Если guest agent включён:
 
 ```bash
 qm guest cmd 522 ping
 ```
 
-Интерпретируйте результат осторожно:
+Интерпретация:
 
-- agent отвечает: Windows или хотя бы agent path ещё частично жив;
-- agent не отвечает: guest может быть hung, agent service может быть остановлен или communication path может быть нарушен.
+- agent отвечает — часть guest path всё ещё жива;
+- agent не отвечает — guest может быть hung, agent service может быть остановлен или сломан communication path.
 
 Отсутствие ответа Guest Agent само по себе не доказывает полный freeze VM.
 
 ## Разделяйте console, network и OS failure
 
-До reboot определите, что именно недоступно.
+До reboot проверьте:
 
-Полезно проверить:
-
-- обновляется ли Proxmox console или картинка замерла;
+- обновляется ли Proxmox console;
 - отвечает ли ICMP;
 - отвечает ли RDP port;
 - отвечает ли application port;
-- отвечает ли QEMU Guest Agent;
-- CPU usage VM активен, idle или застрял;
+- отвечает ли Guest Agent;
+- активен ли CPU usage VM;
 - здоровы ли другие VM на том же host/storage.
 
-Такая классификация помогает разделить:
+Это помогает разделить:
 
-- Windows service failure;
-- Windows OS hang;
+- отказ Windows service;
+- hang Windows OS;
 - guest network failure;
-- QEMU process problem;
-- host/storage problem.
+- проблему QEMU;
+- проблему host/storage.
 
-Не сводите все эти варианты к одному ярлыку «VM freeze».
+Не сводите все варианты к одному ярлыку «VM зависла».
 
-## Опционально: сохраните текущий QEMU status
+## QEMU monitor — только при необходимости
 
-В более сложных инцидентах дополнительное состояние можно получить через QEMU monitor, но на production используйте его осторожно.
+При более глубоком расследовании можно открыть:
 
 ```bash
 qm monitor 522
 ```
 
-Read-only monitor commands могут помочь понять, отвечает ли сам QEMU. Не выполняйте state-changing monitor commands, пока они не стали частью осознанного recovery decision.
+Используйте только read-only monitor commands, если они нужны для диагностики. Не выполняйте state-changing commands без отдельного recovery decision.
 
-Для обычных инцидентов host journal, task history, process state и storage health обычно дают больше полезной информации при меньшем operational risk.
+Для обычного инцидента journal, task history, process state и storage health обычно полезнее и безопаснее.
 
-## Сохраните evidence до recovery
+## Сохраните данные до recovery
 
-Небольшой каталог для инцидента обычно достаточен.
-
-Пример:
+Пример каталога:
 
 ```bash
 mkdir -p /root/incidents/vm-522-20260803
 ```
 
-Сохраните туда relevant command outputs или перенесите их в incident record до reboot.
-
-Полезные artifacts:
+Полезно сохранить:
 
 - `qm config`;
 - `qm status`;
-- cluster и storage status;
-- QEMU PID/process state;
-- filtered host journal;
-- filtered kernel journal;
+- cluster/storage status;
+- PID и process state QEMU;
+- отфильтрованный host journal;
+- kernel journal;
 - task history;
 - relevant task logs;
-- точный recovery action и timestamp.
+- точное recovery action и timestamp.
 
-Не собирайте secrets, guest memory dumps или нерелевантную конфигурацию, если конкретное расследование этого не требует.
+Не собирайте secrets или guest memory dump без необходимости.
 
-## Выберите между shutdown, stop и reset
+## Выбирайте наименее разрушительное восстановление
 
-Используйте наименее разрушительный recovery action, который всё ещё способен восстановить сервис.
-
-Если guest agent и Windows достаточно responsive, сначала попробуйте normal shutdown:
+Если Windows и Guest Agent ещё отвечают, сначала попробуйте штатный shutdown:
 
 ```bash
 qm shutdown 522 --timeout 60
 ```
 
-Если он не сработал, а impact требует восстановления, следующий шаг зависит от состояния и operational risk.
+Если это не помогло, дальнейшее действие зависит от состояния и допустимого outage.
 
-Hard stop или reset уничтожает guest-side runtime evidence и может вызвать filesystem/application recovery. Иногда это необходимо, но решение должно быть осознанным, а не первым диагностическим действием.
+Hard stop или reset уничтожит runtime evidence внутри guest и может вызвать filesystem/application recovery. Иногда это необходимо, но такое действие должно быть осознанным и зафиксированным.
 
-Точно зафиксируйте, какая команда использовалась.
-
-## После recovery сохраните timeline
-
-Когда VM снова работает, расследование не должно заканчиваться фразой «сервис восстановлен».
+## После восстановления сохраните timeline
 
 Запишите:
 
 - время обнаружения freeze;
-- окно сбора evidence;
+- окно сбора diagnostics;
 - recovery command и timestamp;
-- VM boot time;
-- application recovery time;
-- есть ли в Windows Event Logs crash, unexpected shutdown, storage или network event;
-- были ли связанные симптомы на том же host/storage.
+- время загрузки VM;
+- время восстановления приложения;
+- были ли Windows Event Logs с crash, unexpected shutdown, storage или network errors;
+- были ли похожие симптомы на том же host/storage.
 
-Timeline часто полезнее любой одной строки log.
+Timeline часто ценнее одной отдельной строки log.
 
-## Follow-up внутри Windows
+## Windows-side follow-up
 
-После восстановления guest соберите Windows evidence до того, как normal event retention его перезапишет.
-
-Полезные источники:
+После восстановления гостя соберите:
 
 - System event log;
 - Application event log;
@@ -398,16 +372,15 @@ Timeline часто полезнее любой одной строки log.
 - storage/controller warnings;
 - NTFS/ReFS events;
 - service-specific failures;
-- Windows Error Reporting или crash dump data, если настроены;
-- performance monitoring data, если доступны.
+- Windows Error Reporting;
+- crash dump, если настроен;
+- performance monitoring data, если есть.
 
-Сопоставляйте timestamps Windows с timeline Proxmox host. Time synchronization важен: несколько минут drift могут создать ложную последовательность событий.
+Сопоставляйте timestamps Windows и Proxmox. Даже небольшой clock drift может исказить последовательность событий.
 
-## Сравнивайте несколько пострадавших VM
+## Если зависло несколько VM
 
-Если в одном временном интервале зависло несколько VM, делайте comparison table, а не исследуйте каждый случай изолированно.
-
-Полезные столбцы:
+Сравнивайте инциденты в таблице:
 
 | Поле | Пример |
 | --- | --- |
@@ -422,23 +395,19 @@ Timeline часто полезнее любой одной строки log.
 | overlapping backup | yes/no |
 | recovery action | reset |
 
-Паттерны становятся заметны значительно быстрее.
-
-Три зависших Windows VM на разных nodes, но на одном storage path, указывают в другую сторону, чем три независимых guest OS failures.
+Три зависших Windows VM на разных nodes, но на одном storage path, указывают на другое направление расследования, чем три независимых guest OS failures.
 
 ## Избегайте слабых выводов
 
 Не делайте вывод «Windows зависла» только потому, что перестал отвечать RDP.
 
-Не делайте вывод «проблема Proxmox» только потому, что VM восстановилась после `qm reset`.
+Не делайте вывод «проблема Proxmox» только потому, что VM восстановилась после reset.
 
-Не делайте вывод «storage problem» только потому, что одновременно выполнялся backup.
+Не делайте вывод «storage виноват» только потому, что одновременно выполнялся backup.
 
-Всё это гипотезы. Сначала сохраняйте evidence, затем сопоставляйте timing и scope.
+Это гипотезы. Сначала сохраняйте данные, затем сопоставляйте время, охват и общие признаки.
 
-## Минимальный fast-response checklist
-
-Когда outage требует быстрых действий, до reboot сохраните хотя бы это:
+## Минимальный набор при дефиците времени
 
 ```bash
 qm status 522
@@ -450,29 +419,27 @@ pvesh get /cluster/tasks --vmid 522 --limit 30
 journalctl --since '-30 min' --no-pager | grep -Ei '522|qemu|oom|hung|blocked|i/o|timeout'
 ```
 
-Затем запишите recovery action и точный timestamp.
+После этого запишите recovery action и точное время.
 
-Это занимает минуты и сохраняет существенно больше диагностической ценности, чем немедленный reset.
+## Условия остановки
 
-## Stop conditions
-
-Не продолжайте guest-level troubleshooting, если evidence указывает на более широкий infrastructure failure, например:
+Не продолжайте guest-level troubleshooting, если данные показывают более широкий infrastructure failure:
 
 - пострадало несколько VM на одном host;
 - пострадало несколько VM на одном datastore;
 - зафиксирован host OOM;
 - есть kernel hung-task или blocked-I/O warnings;
-- Ceph находится в degraded/inactive state;
-- присутствуют NFS timeout или server-not-responding messages;
+- Ceph в degraded/inactive state;
+- есть NFS timeout или `server not responding`;
 - повторяются QEMU I/O errors;
 - cluster или Corosync нестабилен.
 
-В этот момент защищайте платформу в целом и рассматривайте VM freeze как симптом.
+В такой ситуации VM freeze нужно рассматривать как симптом проблемы платформы.
 
-## Эксплуатационные заметки
+## Эксплуатационный вывод
 
-Лучший incident script — не тот, который собирает максимум данных. Лучший — тот, который оператор способен безопасно выполнить под давлением без изменения состояния системы.
+Лучший incident runbook — не тот, который собирает максимум данных, а тот, который инженер способен безопасно выполнить под давлением за несколько минут.
 
-Держите command blocks короткими, работайте с узким временным диапазоном и отделяйте evidence collection от recovery actions.
+Держите команды короткими, используйте узкое временное окно и всегда отделяйте диагностику от действий, меняющих состояние VM.
 
-Reboot может восстановить доступность и одновременно уничтожить единственное evidence, объясняющее причину отказа. Несколько минут на фиксацию host-side state до recovery обычно оправданы.
+Reboot может вернуть доступность и одновременно уничтожить единственные данные, объясняющие причину отказа.
