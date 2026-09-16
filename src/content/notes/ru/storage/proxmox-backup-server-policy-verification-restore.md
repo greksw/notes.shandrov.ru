@@ -1,6 +1,6 @@
 ---
-title: "Proxmox Backup Server: backup policy, exclusions, verification и restore testing"
-description: "Production-oriented framework для определения PBS backup coverage, retention, prune и GC jobs, verification, restore drills и явно принятых exclusions."
+title: "Proxmox Backup Server: политика резервного копирования, исключения, проверка и тестовое восстановление"
+description: "Практическая схема для PBS: охват резервным копированием, сроки хранения, prune и GC, проверка целостности, тестовые восстановления и документированные исключения."
 category: "Хранилища и резервное копирование"
 tags: ["proxmox", "pbs", "backup", "restore", "retention", "verification"]
 published: 2026-09-16
@@ -14,109 +14,114 @@ translationKey: "storage/proxmox-backup-server-policy-verification-restore"
 
 ## Контекст
 
-Backup system не становится полноценной только потому, что scheduled jobs зелёные.
+Система резервного копирования не становится надёжной только потому, что плановые задания завершаются без ошибок.
 
-Production backup policy должна отвечать на более широкий набор вопросов:
+Политика резервного копирования должна явно отвечать на вопросы:
 
-- что обязательно должно резервироваться;
-- что исключено намеренно;
-- как часто выполняются backups;
-- сколько хранятся recovery points;
-- когда реально освобождается место от unreferenced data;
-- читаются ли сохранённые backup data;
-- выполнялся ли restore test;
-- какой residual recovery risk принят осознанно.
+- какие VM и CT обязаны резервироваться;
+- какие системы исключены намеренно;
+- как часто создаются точки восстановления;
+- сколько времени они хранятся;
+- когда реально освобождается место после удаления старых снимков;
+- проверяется ли целостность сохранённых данных;
+- выполнялось ли реальное тестовое восстановление;
+- какие риски восстановления приняты осознанно.
 
-Proxmox Backup Server даёт сильные primitives для deduplicated VM/CT backups, pruning, garbage collection и verification. Их ценность появляется, когда они объединены в явную policy, а не существуют как несвязанные jobs.
+Proxmox Backup Server предоставляет отдельные механизмы для резервного копирования, удаления старых точек, garbage collection и проверки целостности. Их нужно рассматривать как части одной эксплуатационной политики, а не как независимые задания в интерфейсе.
 
-Примеры используют generic identifiers. Retention и scheduling должны соответствовать реальным RPO, RTO, storage capacity и criticality workloads.
+Примеры ниже обезличены. Частота копирования и сроки хранения должны определяться фактическими требованиями RPO, RTO, доступной ёмкостью и критичностью сервисов.
 
-## Начинайте с coverage policy
+## Сначала определите охват
 
-Не начинайте с retention string. Начинайте с классификации workloads.
+Не начинайте проектирование с параметров retention. Сначала классифицируйте нагрузки.
 
-Практичная модель — распределить все VM/CT по нескольким классам:
+Практичный вариант:
 
-| Класс | Типичный workload | Ожидание по backup |
+| Класс | Типичные системы | Ожидаемая защита |
 | --- | --- | --- |
-| Critical | identity, databases, line-of-business services | scheduled backup, tighter RPO, frequent verification, restore drill |
-| Standard | обычные production servers | scheduled backup и регулярная verification |
-| Rebuildable | automation-managed или легко пересоздаваемые services | backup опционален в зависимости от rebuild cost |
-| Excluded | disposable test systems, templates, archived или accepted-risk workloads | без регулярного backup, причина документирована |
+| Критичные | AD, базы данных, основные бизнес-сервисы | регулярные копии, более жёсткий RPO, частая проверка, тест восстановления |
+| Стандартные | обычные production-серверы | регулярные копии и проверка целостности |
+| Пересоздаваемые | сервисы, которые легко развернуть заново | копирование по необходимости |
+| Исключённые | тестовые VM, шаблоны, архивные или принятые по риску системы | без регулярного копирования, причина задокументирована |
 
-Ключевой control — не названия классов, а наличие осознанного статуса у каждого guest.
+Важно не название класса, а то, что у каждой VM или CT есть явный статус.
 
-Unclassified guest — это не accepted exclusion, а unknown.
+Система без определённого статуса — это не осознанное исключение, а пробел в политике.
 
-## Ведите exclusion register
+## Ведите реестр исключений
 
-Некоторые guests действительно не оправдывают регулярное использование PBS. Это допустимо, если решение явное.
+Некоторые системы действительно не требуют регулярного копирования в PBS. Это нормально, если решение принято осознанно.
 
-Примеры:
+Типичные примеры:
 
-- краткоживущие test VM;
-- templates, которые можно пересоздать из installation media и documented configuration;
-- non-critical appliances с immutable configuration;
-- abandoned/archive-only systems;
-- workloads с намеренно manual recovery method.
+- краткоживущие тестовые VM;
+- шаблоны, которые можно пересоздать из установочного образа и документации;
+- некритичные appliance-системы с неизменяемой конфигурацией;
+- архивные или выведенные из эксплуатации VM;
+- сервисы, для которых принят ручной способ восстановления.
 
-Для каждого exclusion фиксируйте минимум:
+Для каждого исключения фиксируйте минимум:
 
 | Поле | Пример |
 | --- | --- |
-| Workload | `vm-example-test` |
-| Owner / service | infrastructure team |
-| Причина | disposable test system |
-| Recovery method | redeploy from automation |
-| Maximum accepted data loss | all local state |
-| Review date | quarterly |
+| Система | `vm-example-test` |
+| Владелец / сервис | инфраструктурная команда |
+| Причина | одноразовая тестовая система |
+| Способ восстановления | повторное развёртывание |
+| Допустимая потеря данных | всё локальное состояние |
+| Дата пересмотра | ежеквартально |
 
-Так «не входит в PBS job» превращается из случайности в risk decision.
+Так отсутствие VM в задании PBS превращается из случайности в управляемое решение по риску.
 
-## Успешный backup не равен application consistency
+## Успешная копия не гарантирует консистентность приложения
 
-Успешная Proxmox backup task доказывает завершение hypervisor-level backup. Она не доказывает автоматически transactionally consistent recovery point для каждого приложения внутри guest.
+Успешно завершённая задача Proxmox подтверждает, что гипервизор создал резервную копию. Это не означает автоматически, что каждое приложение внутри гостевой ОС получило транзакционно согласованную точку восстановления.
 
-QEMU Guest Agent может улучшить filesystem coordination для Windows и Linux, если он настроен и поддерживается guest. Databases и другие transactional systems всё равно могут требовать application-aware procedures, dumps, WAL/binlog retention или дополнительных recovery controls.
+QEMU Guest Agent может улучшить согласованность файловой системы Windows и Linux. Но базы данных и другие транзакционные системы могут дополнительно требовать:
+
+- собственных backup-механизмов;
+- dump;
+- WAL/binlog;
+- специальных процедур восстановления приложения.
 
 Разделяйте два вопроса:
 
-1. можно ли восстановить VM/CT;
-2. может ли приложение внутри неё чисто восстановиться к нужной точке.
+1. можно ли восстановить VM или CT;
+2. сможет ли приложение внутри неё корректно восстановиться до нужного состояния.
 
-Зелёная PBS task лучше отвечает на первый вопрос, чем на второй.
+Зелёная задача PBS лучше отвечает на первый вопрос, чем на второй.
 
-## Определяйте schedules через RPO
+## Определяйте расписание через RPO
 
-Не используйте один universal schedule для всех workload classes, если требования различаются.
+Не используйте одно расписание для всех систем, если требования отличаются.
 
 Пример:
 
-| Класс | Пример schedule | Approximate infrastructure RPO |
+| Класс | Расписание | Примерный RPO |
 | --- | --- | --- |
-| Critical | every 4 hours | up to 4 hours |
-| Standard | nightly | up to 24 hours |
-| Rebuildable | weekly or manual | accepted |
-| Excluded | none | explicitly accepted |
+| Критичные | каждые 4 часа | до 4 часов |
+| Стандартные | раз в сутки | до 24 часов |
+| Пересоздаваемые | раз в неделю или вручную | принят отдельно |
+| Исключённые | не резервируются | риск принят явно |
 
-Schedule должен отражать recovery requirements, а не только объём свободного storage.
+Расписание должно соответствовать требованиям восстановления, а не только доступному месту на datastore.
 
-Перед увеличением частоты backup убедитесь, что workload, network и storage выдержат её без overlapping jobs и contention.
+Перед увеличением частоты убедитесь, что сеть, storage и сами workload выдержат дополнительную нагрузку без наложения тяжёлых заданий.
 
-## Разделяйте frequency и retention
+## Частота копирования и retention — разные вещи
 
-Backup frequency и retention решают разные задачи.
+Можно создавать резервную копию каждые четыре часа и при этом хранить только выбранное подмножество исторических точек.
 
-Workload может резервироваться каждые четыре часа, но хранить только полезное подмножество historical points. PBS prune policy поддерживает, например:
+PBS поддерживает, в частности:
 
-- keep last;
-- keep hourly;
-- keep daily;
-- keep weekly;
-- keep monthly;
-- keep yearly.
+- `keep-last`;
+- `keep-hourly`;
+- `keep-daily`;
+- `keep-weekly`;
+- `keep-monthly`;
+- `keep-yearly`.
 
-Пример retention policy:
+Пример:
 
 ```text
 keep-last:    6
@@ -125,27 +130,27 @@ keep-weekly:  8
 keep-monthly: 12
 ```
 
-Это пример, а не универсальная рекомендация. Retention должен соответствовать business recovery requirements и datastore capacity.
+Это не универсальная рекомендация. Сроки хранения должны определяться требованиями бизнеса и реальной ёмкостью datastore.
 
 ## Prune и garbage collection — разные операции
 
-**Prune** удаляет backup snapshots согласно retention policy.
+`prune` удаляет точки восстановления согласно политике хранения.
 
-**Garbage collection** сканирует datastore и освобождает chunks, которые больше не referenced ни одним retained snapshot, с учётом safety rules PBS.
+`garbage collection` освобождает chunks, которые больше не используются ни одной сохранённой точкой восстановления, с учётом защитных правил PBS.
 
-Следовательно:
+То есть:
 
 ```text
-prune != immediate space reclamation
+prune != немедленное освобождение места
 ```
 
-Snapshots могут быть уже удалены prune job, а physical usage почти не изменится до завершения GC.
+После prune старые backup snapshots могут уже исчезнуть из списка, а занятое место почти не изменится до завершения GC.
 
-Это особенно важно во время capacity incident.
+Это особенно важно при дефиците свободного пространства.
 
-## Проверяйте PBS jobs через CLI
+## Проверяйте задания PBS через CLI
 
-На PBS host текущую конфигурацию можно посмотреть так:
+На PBS можно посмотреть текущую конфигурацию:
 
 ```bash
 proxmox-backup-manager datastore list
@@ -154,39 +159,37 @@ proxmox-backup-manager garbage-collection list
 proxmox-backup-manager verify-job list
 ```
 
-Эти job families разделены и operationally: retention, space reclamation и integrity checking — независимые controls.
+Удаление старых точек, освобождение места и проверка целостности — разные эксплуатационные процессы. Их нужно контролировать отдельно.
 
-Review job configuration должен быть частью change control, а не предположением, что GUI спустя месяцы всё ещё соответствует первоначальному design.
+## Проектируйте prune осознанно
 
-## Проектируйте prune jobs осознанно
+Политика prune должна соответствовать частоте создания резервных копий.
 
-Prune policy должна соответствовать backup frequency.
-
-Если standard VM резервируется nightly, но после pruning остаётся только одна точка в неделю, практическая restore-point density становится weekly независимо от того, сколько backup jobs запускалось между prune runs.
+Если VM резервируется каждый день, но после prune остаётся только одна точка в неделю, фактическая плотность доступных точек восстановления становится недельной.
 
 При изменении retention:
 
-1. оцените, сколько snapshots останется;
-2. найдите protected/manually important recovery points;
-3. при крупных изменениях сначала проверьте policy на non-critical data;
-4. review prune task result;
-5. дождитесь или запустите controlled GC до оценки reclaimed capacity.
+1. оцените, сколько точек останется;
+2. проверьте, нет ли важных вручную сохранённых точек;
+3. крупные изменения сначала проверьте на некритичных данных;
+4. изучите результат prune;
+5. дождитесь GC и только после этого оценивайте высвобождённое место.
 
-Не меняйте prune и GC policy во время storage emergency, пока не ясно, какие recovery points исчезнут.
+Во время storage-инцидента не меняйте retention вслепую: можно удалить единственную полезную точку восстановления.
 
 ## Планируйте GC после prune
 
-GC наиболее полезен после того, как prune сделал chunks unreferenced.
-
-Типичная последовательность:
+Логичная последовательность обслуживания:
 
 ```text
-backup jobs -> prune -> garbage collection -> verification window
+backup jobs -> prune -> garbage collection -> verification
 ```
 
-Точный timing зависит от backup duration и datastore performance. Не запускайте все тяжёлые maintenance tasks одновременно на одном storage, если они конкурируют за I/O.
+Точные интервалы зависят от длительности задач и производительности datastore.
 
-Проверьте GC jobs:
+Не запускайте все тяжёлые операции одновременно, если они конкурируют за I/O.
+
+Проверка GC:
 
 ```bash
 proxmox-backup-manager garbage-collection list
@@ -199,264 +202,264 @@ proxmox-backup-manager garbage-collection status <datastore>
 proxmox-backup-manager garbage-collection start <datastore>
 ```
 
-Manual GC должен быть controlled operation, а не рефлексом при каждом изменении free space.
+Ручной запуск GC должен быть осознанным действием, а не автоматической реакцией на любое изменение свободного места.
 
-## Verification — integrity control
+## Verification — проверка целостности
 
-PBS verify jobs проверяют stored backup data, чтобы corruption обнаруживалась до дня восстановления.
+Задания verify проверяют сохранённые данные и позволяют обнаружить повреждение до момента реального восстановления.
 
 ```bash
 proxmox-backup-manager verify-job list
 ```
 
-Manual run по job ID:
+Ручной запуск конкретного задания:
 
 ```bash
 proxmox-backup-manager verify-job run <job-id>
 ```
 
-Verification особенно важна для long-lived recovery points, которые могут не читаться месяцами.
+Проверка особенно важна для старых точек восстановления, которые могут месяцами не читаться.
 
-Практичная policy — регулярно проверять новые snapshots и повторно верифицировать старые до того, как их предыдущая verification станет operationally stale.
+## Verification не заменяет тест восстановления
 
-## Verification не заменяет restore test
+Проверенная резервная копия надёжнее копии, которую после создания никто не читал. Но verification не доказывает, что восстановленная ОС и приложение реально запустятся.
 
-Verified backup сильнее backup, который ни разу не перечитывался, но он не доказывает, что restored OS/application реально стартует.
+Тест восстановления должен подтвердить:
 
-Restore test отвечает на другие вопросы:
+- нужную точку можно быстро найти;
+- права и учётные данные доступны;
+- целевое хранилище принимает восстановление;
+- VM или CT загружается;
+- сеть можно безопасно поднять в изолированном сегменте;
+- приложение стартует;
+- восстановленные данные пригодны к работе.
 
-- можно ли быстро найти нужный backup;
-- доступны ли permissions/credentials;
-- принимает ли target storage restore;
-- загружается ли guest;
-- безопасно ли поднимается networking в isolated environment;
-- запускается ли application;
-- пригодны ли recovered data.
+Verification и restore test решают разные задачи и дополняют друг друга.
 
-Verification и restore drills — взаимодополняющие controls.
+## Тестируйте восстановление на представительных системах
 
-## Делайте restore drills representative workloads
+Не ждите реального аварийного случая, чтобы впервые проверить процедуру.
 
-Не ждите реального outage, чтобы впервые выяснять restore procedure.
+Полезно периодически восстанавливать:
 
-Выбирайте representative workloads из critical classes:
-
-- один Windows server;
+- одну Windows VM;
 - одну Linux VM;
 - один container;
-- workload с крупными virtual disks;
-- workload со своими application-consistency requirements.
+- workload с большим виртуальным диском;
+- сервис со специфическими требованиями к консистентности приложения.
 
-Восстанавливайте под временным VMID/CTID и изолируйте network перед boot, если duplicate addresses, domain membership или production services могут создать конфликт.
+Восстанавливайте копию под временным VMID или CTID. До загрузки изолируйте сеть, если возможны конфликты IP, доменного членства или production-сервисов.
 
-Для VM restore Proxmox VE поддерживает `qmrestore`:
+Для VM можно использовать `qmrestore`:
 
 ```bash
 qmrestore <backup-volume> <temporary-vmid> --storage <target-storage>
 ```
 
-Точный backup-volume identifier лучше копировать из реального storage content view, а не собирать вручную.
+Точный идентификатор backup volume лучше брать из фактического содержимого storage, а не собирать вручную.
 
-Удаляйте temporary guest только после фиксации recovery evidence.
+## Измеряйте фактический RTO
 
-## Проверяйте recovery path, а не только data
-
-Полезный restore drill фиксирует timestamps:
+Для тестового восстановления фиксируйте время этапов:
 
 ```text
-T0  incident declared
-T1  correct backup identified
-T2  restore started
-T3  VM/CT restore completed
-T4  guest booted
-T5  application validated
+T0  объявлено восстановление
+T1  найдена нужная резервная копия
+T2  начато восстановление
+T3  восстановление VM/CT завершено
+T4  гостевая ОС загрузилась
+T5  приложение проверено
 ```
 
-Так появляется observed recovery time вместо предположительного RTO.
+Так появляется измеренный RTO, а не предположение.
 
-Если restore слишком медленный, причина может быть в network throughput, target storage, datastore contention, large disk size или просто нереалистичном RTO.
+Если восстановление слишком долгое, причина может быть в сети, целевом storage, конкурирующей нагрузке или просто в нереалистичном RTO.
 
-## Проверяйте coverage после инфраструктурных изменений
+## Перепроверяйте охват после изменений инфраструктуры
 
-Backup coverage часто ломается потому, что infrastructure меняется быстрее backup schedule.
+Покрытие резервным копированием часто ломается не из-за PBS, а потому что инфраструктура меняется быстрее расписаний.
 
-Review нужен, когда:
+Повторная проверка нужна, когда:
 
-- создана новая VM/CT;
-- workload перешёл из test в production;
-- template стал long-lived server;
-- VM мигрировала в другой cluster;
-- изменились storage/PBS credentials;
-- старый exclusion больше не оправдан.
+- появилась новая VM или CT;
+- тестовая система стала production;
+- шаблон превратился в постоянный сервер;
+- VM переехала в другой кластер;
+- изменились storage или PBS credentials;
+- прежнее исключение больше не оправдано.
 
-После каждого существенного изменения проверьте, находится ли guest в правильной backup class и job.
+Не рассчитывайте на «добавим потом по памяти».
 
-Не рассчитывайте «добавить потом по памяти».
+## Ошибка backup для критичной системы — это инцидент
 
-## Failed backup для critical workload — service failure
+Регулярно падающую задачу нельзя считать обычным шумом.
 
-Регулярно падающий scheduled backup нельзя считать обычным noise.
+Проверяйте отдельно:
 
-Разделяйте возможные причины:
+- guest lock или другую активную задачу;
+- недоступность storage;
+- сетевые ошибки;
+- проблемы аутентификации или прав PBS;
+- snapshot/QEMU Guest Agent;
+- нехватку места на datastore;
+- наложение maintenance jobs;
+- проблемы исходного storage.
 
-- guest lock или другая active task;
-- storage unavailable;
-- network interruption;
-- PBS authentication/permission issue;
-- snapshot/guest-agent problem;
-- datastore capacity pressure;
-- overlapping maintenance;
-- unhealthy source storage.
+Исправляйте причину, а не просто перезапускайте задачу до первого зелёного результата.
 
-Исправляйте cause, а не просто rerun task до первого green result.
+## Планирование ёмкости и дедупликация
 
-## Capacity planning при deduplication
+Из-за дедупликации логический размер резервных копий и фактический рост datastore не совпадают.
 
-PBS deduplication означает, что logical backup size и physical datastore growth не равны.
-
-Это усложняет простые capacity formulas, особенно для похожих VM, но deduplication не означает unlimited capacity.
+Это усложняет простые расчёты, но не означает, что место бесконечно.
 
 Отслеживайте:
 
-- datastore physical usage;
-- recent growth rate;
-- GC reclaimed bytes;
-- количество protected snapshots;
-- крупные новые workloads;
-- retention-policy changes.
+- физически занятое место;
+- скорость роста за последние периоды;
+- сколько места освободил GC;
+- количество сохранённых точек;
+- появление крупных новых VM;
+- изменения retention.
 
-Если datastore регулярно спасается только «героическим» GC, это уже capacity-planning problem.
+Если datastore регулярно удаётся спасти только срочным GC, это уже проблема планирования ёмкости.
 
-## Защищайте сам backup server
+## Защищайте сам PBS
 
-PBS — часть recovery path и не должен полностью разделять failure domains защищаемого cluster.
+PBS — часть цепочки восстановления. Он не должен полностью разделять те же точки отказа, что и защищаемый кластер.
 
-Минимально стоит разделять:
+Желательно разделять:
 
-- management credentials;
+- административные учётные данные;
 - storage failure domain;
-- network path;
-- administrative access;
-- monitoring/alerting.
+- сетевой путь;
+- административный доступ;
+- мониторинг и оповещения.
 
-Если risk model требует, добавьте второй PBS, remote sync или offline/offsite copy. Один PBS остаётся single backup-system failure domain даже при deduplicated и verified data.
+Если модель риска требует, используйте второй PBS, remote sync или отдельную offline/offsite-копию.
 
-## Offsite или second copy
+Один PBS остаётся единой точкой отказа системы резервного копирования, даже если данные внутри него дедуплицируются и проходят verification.
 
-Local PBS хорошо защищает от многих guest/cluster failures, но не обязательно от site loss, ransomware с administrative reach или одновременной гибели storage.
+## Offsite-копия и вторая копия — не одно и то же
 
-PBS поддерживает datastore synchronization на другой backup server. Нужна ли она — зависит от business impact и threat model.
+Локальный PBS хорошо защищает от отказов VM, узла или кластера. Но он не обязательно защищает от:
+
+- потери площадки;
+- ransomware с административным доступом;
+- одновременного уничтожения основного и резервного storage.
+
+PBS поддерживает синхронизацию datastore на другой backup server.
 
 Ключевое различие:
 
 ```text
-backup copy != independent disaster-recovery copy
+backup copy != независимая disaster-recovery copy
 ```
 
-Документируйте наличие offsite recovery. Если его нет — фиксируйте residual risk явно.
+Если offsite-защиты нет, это нужно явно записать как остаточный риск.
 
-## Accepted-risk exclusions
+## Исключения с принятым риском
 
-Exclusion допустим только если:
+Исключение допустимо только если:
 
-- workload идентифицирован;
+- система идентифицирована;
 - причина документирована;
-- recovery method известен;
-- maximum data loss понятен;
-- у решения есть owner;
-- exclusion периодически пересматривается.
+- способ восстановления известен;
+- допустимая потеря данных понятна;
+- у решения есть владелец;
+- исключение периодически пересматривается.
 
-Нормальные примеры — disposable test VM или services, полностью rebuildable из version-controlled automation.
+Нормальный пример — одноразовая тестовая VM или сервис, полностью воспроизводимый из version-controlled automation.
 
-Плохие примеры — «backup job переполнен» или «никто не добавил».
+Плохой пример — «никто не добавил в backup job».
 
-## Templates и archive systems
+## Шаблоны и архивные системы
 
-Templates и archive-only VM часто требуют иного подхода.
+Шаблоны и архивные VM часто требуют отдельного подхода.
 
-Если template воспроизводим из installation media, cloud-init, automation и packages, manual/infrequent backup может быть достаточен.
+Если шаблон можно воспроизвести из установочного образа, cloud-init, automation и списка пакетов, редкого или ручного резервного копирования может быть достаточно.
 
-Если archive VM содержит unique historical data, её низкая runtime criticality не делает автоматически низкой backup importance.
+Если архивная VM содержит уникальные исторические данные, низкая runtime-criticality не означает низкую ценность резервной копии.
 
-Классифицируйте по recoverability и data value, а не CPU usage.
+Классифицируйте системы по восстанавливаемости и ценности данных, а не по загрузке CPU.
 
-## Application-specific backup layers
+## Резервное копирование на уровне приложения
 
-PBS должен сосуществовать с application-native backup там, где это действительно улучшает recovery.
+PBS должен дополняться средствами самого приложения там, где это улучшает восстановление.
 
 Примеры:
 
-- PostgreSQL base backup + WAL strategy;
-- logical database dumps;
-- Mailcow/application-level configuration exports, если позволяют ресурсы;
-- directory-service-aware recovery procedures;
-- file-level copy с отдельной retention policy.
+- PostgreSQL base backup + WAL;
+- логические дампы баз данных;
+- экспорт конфигурации Mailcow или другого сервиса;
+- процедуры восстановления directory services;
+- файловые копии с отдельным сроком хранения.
 
-Это defense in depth, а не требование дублировать backup mechanisms для каждого workload.
+Это дополнительный уровень защиты, а не требование дублировать каждый механизм для каждой VM.
 
-## Минимальный operational review
+## Минимальная эксплуатационная проверка
 
-Периодический PBS review должен отвечать на вопросы:
+Периодически отвечайте на вопросы:
 
 ```text
-Все ли production workloads классифицированы?
-Exclusions всё ещё намеренные?
-Scheduled backup jobs проходят?
-Prune jobs сохраняют нужную историю?
+Все production-системы классифицированы?
+Все исключения всё ещё осознанны?
+Плановые backup jobs проходят успешно?
+Prune сохраняет нужную историю?
 Garbage collection завершается нормально?
-Verify jobs успешны?
-Недавно выполнялся representative restore?
-Datastore growth находится в ожидаемых пределах?
-Offsite/second-copy risk явно рассмотрен?
+Verify jobs проходят успешно?
+Недавно выполнялось реальное тестовое восстановление?
+Рост datastore остаётся в ожидаемых пределах?
+Риск отсутствия offsite/second copy рассмотрен явно?
 ```
 
-Это полезнее простого просмотра last backup timestamp.
+Это полезнее простого просмотра времени последней резервной копии.
 
-## Stop conditions
+## Условия остановки
 
-Не меняйте retention и не удаляйте recovery points, если:
+Не меняйте retention и не удаляйте точки восстановления, если:
 
-- business owner не может подтвердить, какие historical points ещё нужны;
-- verification даёт необъяснимые failures;
-- datastore/filesystem unhealthy;
-- active backup jobs продолжают писать в affected datastore;
-- prune change удалит единственный known-good recovery point;
-- recovery path никогда не тестировался, а workload critical.
+- владелец сервиса не может подтвердить, какие исторические точки ещё нужны;
+- verification показывает необъяснимые ошибки;
+- datastore или underlying filesystem нездоров;
+- активные backup jobs продолжают писать в этот datastore;
+- новая prune-policy удалит единственную известную рабочую точку;
+- процедура восстановления критичной системы никогда не тестировалась.
 
-Во время storage-capacity incident освобождение места не всегда важнее сохранения единственной рабочей restore point.
+При дефиците места освобождение storage не всегда важнее сохранения единственной пригодной точки восстановления.
 
-## Какие recovery evidence сохранять
+## Что сохранять по результатам восстановления
 
-Для critical restore drills и реальных recoveries фиксируйте:
+Для критичных тестов и реальных восстановлений фиксируйте:
 
-- source backup timestamp;
+- время исходной backup-точки;
 - PBS datastore и namespace;
-- restore target;
-- restore start/end time;
-- boot result;
-- application validation result;
-- manual steps;
-- observed RTO;
-- data gap относительно required RPO.
+- целевое хранилище;
+- время начала и окончания восстановления;
+- результат загрузки VM/CT;
+- результат проверки приложения;
+- ручные шаги;
+- фактический RTO;
+- фактический разрыв относительно требуемого RPO.
 
-Так recovery превращается из tribal knowledge в operational procedure.
+Так восстановление перестаёт быть «знанием одного администратора» и превращается в проверяемую эксплуатационную процедуру.
 
-## Production pattern
+## Рабочая схема
 
-Практичный PBS design прост:
+Практичная политика PBS выглядит так:
 
 ```text
-classify workloads
-  -> schedule backups
-  -> document exclusions
-  -> prune intentionally
-  -> run GC
-  -> verify stored backups
-  -> perform restore drills
-  -> review accepted risk
+классифицировать системы
+  -> задать расписание
+  -> документировать исключения
+  -> применять prune
+  -> выполнять GC
+  -> проверять целостность
+  -> тестировать восстановление
+  -> пересматривать принятые риски
 ```
 
-Сильный признак зрелости — не «все backup jobs green», а понимание того, что защищено, что намеренно не защищено и сколько реально занимает tested recovery.
+Главный признак зрелой системы — не «все backup jobs зелёные», а понимание того, что именно защищено, что намеренно не защищено и сколько реально занимает проверенное восстановление.
 
 ## References
 
