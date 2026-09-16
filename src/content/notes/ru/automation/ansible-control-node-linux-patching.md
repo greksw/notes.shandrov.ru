@@ -1,394 +1,343 @@
 ---
-title: "Ansible control node и безопасное обновление Linux-серверов"
-description: "Лабораторная базовая схема развёртывания Ansible control node и обновления Debian- и RHEL-подобных серверов через inventory groups, become, canary rollout и контролируемые перезагрузки."
+title: "Ansible control node для production-обновления Linux-серверов"
+description: "Production-схема Ansible для массового обновления AlmaLinux-серверов: role-based inventory, raw/DNF workflow, определение обновления ядра и безопасное развитие maintenance-процесса."
 category: "Автоматизация и конфигурация"
 tags: ["ansible", "linux", "patching", "automation", "ssh", "operations"]
 published: 2026-09-16
 updated: 2026-09-16
-status: lab
-testedOn: []
-featured: false
+status: current
+testedOn: ["AlmaLinux 10.2 control node", "Ansible Core 2.16.16", "AlmaLinux managed hosts"]
+featured: true
 lang: ru
 translationKey: "automation/ansible-control-node-linux-patching"
 ---
 
 ## Контекст
 
-Ansible работает без агента: control node запускает Ansible и подключается к управляемым Linux-хостам по SSH. На managed nodes обычно нужны Python и рабочая SSH-учётная запись, но отдельный Ansible daemon не требуется.
+В production уже используется отдельный Ansible control node для массового обновления Linux-серверов.
 
-Для обновления серверов сложность не в командах `apt upgrade` или `dnf update`. Основная задача — контролировать область воздействия, привилегии, порядок выполнения, перезагрузки и обработку ошибок так, чтобы одно неудачное обновление не стало массовым инцидентом.
+Control node работает на AlmaLinux 10.2 с Ansible Core 2.16.16. Inventory разделяет обычные AlmaLinux-серверы, Proxmox VE nodes, Proxmox Backup Server и role-based группы: monitoring, backup, mail, Asterisk и Wazuh.
 
-Эта заметка намеренно имеет статус **лаборатория**, пока точные production inventory, модель аутентификации и maintenance workflow не проверены на реальных серверах.
+Текущий production playbook обновляет только группу `almalinux_servers`. Hypervisor и backup infrastructure присутствуют в inventory, но не входят в тот же generic update play.
 
-## Целевая схема
+Такое разделение важнее, чем сложность самого playbook: массовая автоматизация безопасна только тогда, когда область воздействия остаётся явной.
 
-Для небольшого окружения достаточно одного выделенного Linux control node:
+## Текущая production-схема
 
-```text
-Ansible control node
-  -> SSH
-  -> Debian/Ubuntu servers
-  -> RHEL/Alma/Rocky servers
-```
-
-Playbooks, структуру inventory и несекретную конфигурацию храните в Git. Приватные ключи, become passwords и vault passwords — вне репозитория.
-
-Пример структуры:
+Фактический inventory построен по ролям. В обезличенном виде он выглядит так:
 
 ```text
-ansible/
-├── ansible.cfg
-├── inventory/
-│   └── hosts.yml
-├── group_vars/
-│   └── all.yml
-└── playbooks/
-    ├── preflight.yml
-    ├── patch-linux.yml
-    └── reboot-linux.yml
+@all
+├── @almalinux_servers
+├── @proxmox_ve_nodes
+├── @proxmox_pbs_nodes
+├── @asterisk_servers
+├── @monitoring_servers
+├── @backup_servers
+├── @mail
+├── @mail2
+├── @mail3
+├── @mail4
+└── @wazuh
 ```
 
-## Установка Ansible на control node
+Role-groups при необходимости пересекаются с более общей OS-group. Это позволяет адресовать либо семейство систем, либо отдельную прикладную роль.
 
-Текущая документация Ansible поддерживает как полный пакет `ansible`, так и более компактный `ansible-core`. Для минимального control node достаточно `ansible-core`, если используются только встроенные модули из этой заметки.
-
-Один из чистых вариантов установки — через `pipx`:
+Перед maintenance полезно проверять effective inventory:
 
 ```bash
-pipx install ansible-core
+ansible-inventory --graph
 ```
 
-Проверка:
+Для production это простой, но важный guardrail: сначала убедиться, что playbook затронет именно ожидаемые hosts.
+
+## Control node
+
+Текущий production baseline:
+
+```text
+OS: AlmaLinux 10.2
+Ansible: ansible-core 2.16.16
+Config: /etc/ansible/ansible.cfg
+```
+
+Быстрые проверки:
 
 ```bash
 ansible --version
-ansible-playbook --version
+ansible-inventory --graph
 ```
 
-Версию среды автоматизации лучше фиксировать или документировать, а не менять её незаметно во время несвязанного maintenance.
+Важнее не конкретный способ установки Ansible, а зафиксированная runtime-версия и понятный config path.
 
-## Модель SSH-доступа
+## Текущий production playbook обновления
 
-Используйте отдельную automation account или другую явно разрешённую административную учётную запись. Root SSH login не должен быть базовой моделью.
+Сейчас используется `raw`, чтобы update path не зависел от Python modules на managed host.
 
-Учетной записи нужны:
-
-- SSH-доступ с control node;
-- доверенный SSH key;
-- Python на managed node;
-- privilege escalation для задач, требующих root.
-
-Для повышения привилегий Ansible использует `become`. Будет ли sudo без пароля, с паролем или через другой механизм — это уже политика конкретного окружения.
-
-Если нужен become password, не храните его в plaintext inventory. Используйте Ansible Vault, утверждённое хранилище секретов или интерактивный ввод.
-
-## Inventory
-
-Пример YAML inventory:
-
-```yaml
-all:
-  children:
-    linux:
-      children:
-        debian:
-          hosts:
-            deb01.example.net:
-            deb02.example.net:
-        rhel:
-          hosts:
-            rhel01.example.net:
-            rhel02.example.net:
-
-    canary:
-      hosts:
-        deb01.example.net:
-        rhel01.example.net:
-```
-
-Общие параметры подключения можно вынести в `group_vars/all.yml`:
-
-```yaml
-ansible_user: ansible
-```
-
-Приватные ключи не коммитьте. Лучше использовать обычную SSH-конфигурацию или agent, чем прописывать пути к ключам и секреты в каждом inventory entry.
-
-Проверьте inventory:
-
-```bash
-ansible-inventory -i inventory/hosts.yml --graph
-```
-
-## Базовый ansible.cfg
-
-Project-local конфигурация может быть явной и при этом не ослаблять SSH trust:
-
-```ini
-[defaults]
-inventory = ./inventory/hosts.yml
-host_key_checking = True
-retry_files_enabled = False
-timeout = 20
-forks = 10
-interpreter_python = auto_silent
-```
-
-Не отключайте host-key checking только ради удобства первого подключения. `known_hosts` должен заполняться контролируемо.
-
-## Первая проверка связи
-
-До любых package changes:
-
-```bash
-ansible linux -m ansible.builtin.ping
-```
-
-Затем соберите немного фактов:
-
-```bash
-ansible linux -m ansible.builtin.setup \
-  -a 'filter=ansible_distribution*'
-```
-
-Ошибки подключения нужно понять до начала patching. На первом этапе не стоит скрывать unreachable hosts через `ignore_unreachable`.
-
-## Preflight playbook
-
-`playbooks/preflight.yml`:
+Обезличенный вариант:
 
 ```yaml
 ---
-- name: Preflight Linux hosts
-  hosts: linux
-  gather_facts: true
+- name: Update AlmaLinux servers
+  hosts: almalinux_servers
+  become: true
 
   tasks:
-    - name: Require a supported OS family
-      ansible.builtin.assert:
-        that:
-          - ansible_facts.os_family in ['Debian', 'RedHat']
-        fail_msg: >-
-          Unsupported OS family: {{ ansible_facts.os_family }}
+    - name: Update all packages
+      ansible.builtin.raw: dnf update -y
+      register: update_result
+      changed_when: "'Nothing to do' not in update_result.stdout"
 
-    - name: Confirm current kernel
-      ansible.builtin.command: uname -r
-      register: kernel
+    - name: Remove old dependencies
+      ansible.builtin.raw: dnf autoremove -y
+      when: update_result.changed
+
+    - name: Clean DNF cache
+      ansible.builtin.raw: dnf clean all
+      when: update_result.changed
+
+    - name: Check whether a newer kernel was installed
+      ansible.builtin.raw: |
+        CURRENT_KERNEL=$(uname -r)
+        LATEST_KERNEL=$(rpm -q kernel --last | head -1 | awk '{print $1}' | sed 's/kernel-//')
+        if [ "$CURRENT_KERNEL" != "$LATEST_KERNEL" ]; then
+          echo "kernel_updated"
+        else
+          echo "kernel_not_updated"
+        fi
+      register: kernel_check
       changed_when: false
 
-    - name: Show current kernel
-      ansible.builtin.debug:
-        var: kernel.stdout
-```
-
-Сначала запускайте только на canary group:
-
-```bash
-ansible-playbook playbooks/preflight.yml --limit canary
-```
-
-## Playbook обновления
-
-Консервативная первая версия обновляет по одному серверу.
-
-`playbooks/patch-linux.yml`:
-
-```yaml
----
-- name: Patch Linux servers
-  hosts: linux
-  become: true
-  gather_facts: true
-  serial: 1
-  any_errors_fatal: true
-
-  tasks:
-    - name: Update Debian package metadata and upgrade packages
-      ansible.builtin.apt:
-        update_cache: true
-        cache_valid_time: 3600
-        upgrade: dist
-      when: ansible_facts.os_family == 'Debian'
-
-    - name: Upgrade installed packages on RHEL-family hosts
-      ansible.builtin.dnf:
-        name: '*'
-        state: latest
-        update_only: true
-        update_cache: true
-      when: ansible_facts.os_family == 'RedHat'
-
-    - name: Check whether Debian requests a reboot
-      ansible.builtin.stat:
-        path: /var/run/reboot-required
-      register: debian_reboot_required
-      when: ansible_facts.os_family == 'Debian'
-
-    - name: Report Debian reboot requirement
-      ansible.builtin.debug:
-        msg: "Reboot required on {{ inventory_hostname }}"
+    - name: Schedule reboot after kernel update
+      ansible.builtin.raw: shutdown -r +1 "Reboot after kernel update"
       when:
-        - ansible_facts.os_family == 'Debian'
-        - debian_reboot_required.stat.exists | default(false)
+        - update_result.changed
+        - "'kernel_updated' in kernel_check.stdout"
+
+    - name: Final status
+      ansible.builtin.debug:
+        msg: |
+          {{ inventory_hostname }} - UPDATE COMPLETE
+          {% if update_result.changed %}
+          System updated
+          {% if 'kernel_updated' in kernel_check.stdout %}
+          Reboot scheduled
+          {% endif %}
+          {% else %}
+          No updates required
+          {% endif %}
 ```
 
-`serial: 1` сознательно жертвует скоростью ради уменьшения blast radius. После проверки процесса размер batch можно увеличивать осознанно.
+Это реальный production baseline, но он намеренно простой.
 
-Для RHEL-подобных систем playbook выше не пытается универсально определять необходимость reboot. Это зависит от установленного инструментария и локальной политики; лучше оформить отдельной проверкой, чем делать вид, что один эвристический признак подходит всем.
+## Зачем здесь `raw`
 
-## Проверка до выполнения
+`ansible.builtin.raw` отправляет команду напрямую через SSH и не требует обычного Python module subsystem на managed host.
 
-Синтаксис:
+Это полезно для bootstrap и для серверов, где наличие Python ещё нельзя считать гарантированным.
+
+Но есть и ограничения:
+
+- нет обычной module-level idempotence;
+- check mode практически не помогает для package operation;
+- `changed` приходится определять по stdout;
+- parsing зависит от текста package manager и locale;
+- error handling ближе к shell, чем к структурированным Ansible modules.
+
+Поэтому `raw` здесь допустим как осознанный compatibility choice, но не обязательно как конечная форма automation.
+
+## Как сейчас определяется необходимость reboot
+
+Production play сравнивает running kernel с самым новым установленным kernel package и планирует reboot через минуту, если они различаются:
 
 ```bash
-ansible-playbook playbooks/patch-linux.yml --syntax-check
+shutdown -r +1 "Reboot after kernel update"
 ```
 
-Check mode как дополнительный этап ревью:
+Плюс этого подхода в том, что package update успевает завершиться до начала reboot.
 
-```bash
-ansible-playbook playbooks/patch-linux.yml \
-  --limit canary \
-  --check \
-  --diff
+Минус — Ansible не ждёт возврата host. Поэтому финальный `debug` не доказывает, что сервер успешно загрузился и приложение снова работает.
+
+Это важно разделять:
+
+```text
+package update completed != maintenance completed
 ```
 
-Check mode не является транзакционным симулятором. Реальная dependency resolution и состояние внешних repositories всё равно могут отличаться.
+## Inventory уже снижает blast radius
 
-## Сначала canary
+Отдельные группы для Proxmox VE и PBS уже есть, а массовый update play нацелен только на `almalinux_servers`.
 
-Реальное обновление сначала только на representative hosts:
+Это правильная схема. Hypervisor и backup nodes должны обслуживаться отдельными runbook'ами, потому что там важны reboot order, VM placement, storage state и cluster health.
 
-```bash
-ansible-playbook playbooks/patch-linux.yml --limit canary
+То же относится к mail, databases, directory services и другим stateful/clustered workloads: Ansible может управлять ими, но не обязательно через один общий update play.
+
+## Что стоит улучшить следующим этапом
+
+Текущий workflow работает, но его можно сделать безопаснее без полной переделки.
+
+### 1. Добавить canary group
+
+Сначала обновлять один-два representative hosts:
+
+```text
+canary -> validate -> wider group
 ```
 
-После этого проверяйте приложения на этих серверах. Успешный package task не равен здоровому сервису.
+Это снижает blast radius при проблемном package/repository update.
 
-Только потом расширяйте scope:
+### 2. Добавить rolling batches
 
-```bash
-ansible-playbook playbooks/patch-linux.yml
-```
+Сейчас playbook не задаёт `serial`, поэтому Ansible может работать с несколькими hosts параллельно согласно стратегии и `forks`.
 
-## Перезагрузки лучше отделить
-
-Для первого внедрения отдельный reboot playbook проще контролировать, чем автоматически перезагружать каждый обновлённый сервер.
-
-`playbooks/reboot-linux.yml`:
-
-```yaml
----
-- name: Reboot explicitly selected Linux servers
-  hosts: linux
-  become: true
-  gather_facts: false
-  serial: 1
-  any_errors_fatal: true
-
-  tasks:
-    - name: Reboot and wait for the host to return
-      ansible.builtin.reboot:
-        reboot_timeout: 900
-```
-
-Не запускайте его вслепую на весь inventory. Используйте явный limit:
-
-```bash
-ansible-playbook playbooks/reboot-linux.yml \
-  --limit deb01.example.net
-```
-
-`ansible.builtin.reboot` ждёт перезапуск и возврат host, но не доказывает, что application stack после этого исправен.
-
-## Rolling updates
-
-По умолчанию Ansible работает с несколькими hosts параллельно. Keyword `serial` ограничивает размер batch и является базовым механизмом rolling maintenance.
-
-Например:
+Для infrastructure servers лучше начинать консервативно:
 
 ```yaml
 serial: 1
 ```
 
-или после достаточной проверки:
+После стабилизации процесса batch можно увеличить.
+
+### 3. Вынести `dnf autoremove`
+
+`dnf autoremove` меняет package state сильнее, чем обычный update. Его лучше сделать отдельной reviewed maintenance operation, а не автоматическим следствием любого обновления.
+
+Для critical hosts сначала стоит увидеть, какие packages будут удалены.
+
+### 4. Перейти на DNF module, когда Python гарантирован
+
+Если Python стабильно присутствует на managed AlmaLinux hosts, package task можно перевести на structured module:
 
 ```yaml
-serial: 2
+- name: Upgrade installed packages
+  ansible.builtin.dnf:
+    name: '*'
+    state: latest
+    update_only: true
+    update_cache: true
 ```
 
-Для clustered systems размер batch должен следовать quorum и архитектуре сервиса, а не универсальному числу.
+Тогда не придётся определять `changed` по строке `Nothing to do`.
 
-## Что не стоит автоматически включать в generic patch group
+### 5. Сделать reboot управляемым Ansible task
 
-Не смешивайте с обычными Linux-серверами системы, у которых есть собственный порядок maintenance, например:
+Более зрелая схема может использовать:
 
-- hypervisor clusters;
-- storage clusters;
-- database clusters;
-- directory-service controllers;
-- mail platforms;
-- firewalls и routers;
-- системы со строгой application-level последовательностью обновления.
+```yaml
+- name: Reboot and wait for the server
+  ansible.builtin.reboot:
+    reboot_timeout: 900
+```
 
-Ansible может автоматизировать и их, но им нужен workload-specific orchestration, а не общий `state: latest` play.
+Это хотя бы подтверждает возврат SSH. Но application health всё равно нужно проверять отдельно.
+
+### 6. Добавить post-update validation по ролям
+
+Для каждой role нужно определить, что означает «сервер здоров после обновления».
+
+Примеры:
+
+```text
+monitoring server -> monitoring service active + UI/API reachable
+mail server       -> containers/services healthy + SMTP checks
+Wazuh             -> manager/indexer/dashboard services healthy
+Asterisk          -> service active + SIP/AMI/health check
+backup server     -> backup service/storage available
+```
+
+Успешный exit code package manager недостаточен для production validation.
+
+## Рекомендуемый staged workflow
+
+Безопасное развитие текущей схемы:
+
+```text
+inventory review
+  -> connectivity check
+  -> canary update
+  -> service validation
+  -> rolling update wider group
+  -> reboot only where required
+  -> wait for host return
+  -> application validation
+  -> record failures and exceptions
+```
+
+Так сохраняется реальный production use case, но automation перестаёт усиливать риск одного неудачного package или reboot decision.
+
+## Пример более безопасного AlmaLinux play
+
+Это целевая схема, а не утверждение, что production уже работает именно так:
+
+```yaml
+---
+- name: Rolling AlmaLinux update
+  hosts: almalinux_servers
+  become: true
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+
+  tasks:
+    - name: Upgrade installed packages
+      ansible.builtin.dnf:
+        name: '*'
+        state: latest
+        update_only: true
+        update_cache: true
+
+    - name: Record running kernel
+      ansible.builtin.command: uname -r
+      register: running_kernel
+      changed_when: false
+
+    - name: Show running kernel
+      ansible.builtin.debug:
+        var: running_kernel.stdout
+```
+
+Определение reboot requirement и role-specific validation лучше добавлять явно, а не прятать внутрь общего package step.
 
 ## Backup и rollback
 
 Ansible не делает package upgrades транзакционными.
 
-До обновления критичного host должен быть понятен реальный recovery path:
+До обновления важных серверов должен быть понятен recovery mechanism:
 
 - VM/PBS backup;
 - application-native backup;
-- filesystem snapshot, если уместно;
-- возврат версии package, если старая сборка ещё доступна в repository;
-- документированная процедура rebuild.
+- snapshot, если уместно;
+- package downgrade path, если поддерживается;
+- rebuild procedure для disposable/reproducible systems.
 
-Playbook может остановиться после failure. Он не может гарантировать автоматическую обратимость каждой package transaction.
+Успешный playbook не заменяет recovery plan.
 
-## Проверка после обновления
+## Operational checklist
 
-Минимально фиксируйте:
-
-```text
-host
-OS version
-kernel before
-kernel after
-package task result
-reboot performed: yes/no
-SSH reachable after maintenance: yes/no
-application validation: pass/fail
-```
-
-Если сервис мониторится, убедитесь, что ожидаемые alerts очистились, а health metrics вернулись к норме.
-
-## Безопасная эксплуатационная последовательность
-
-Практичный workflow:
+Перед массовым обновлением:
 
 ```text
-inventory review
-  -> SSH connectivity
-  -> preflight
-  -> syntax check
-  -> check mode
-  -> canary patch
-  -> application validation
-  -> wider patch rollout
-  -> explicit reboot set
-  -> post-maintenance validation
+[ ] inventory target проверен
+[ ] excluded infrastructure подтверждена
+[ ] backup/recovery path известен
+[ ] выбран первый host или canary
+[ ] maintenance window понятен
 ```
 
-Ценность Ansible не в том, что он может одновременно обновить сто серверов. Ценность в том, что одна и та же проверенная процедура повторяется предсказуемо, а scope и failure handling остаются явными.
+После:
+
+```text
+[ ] package task completed
+[ ] rebooted hosts returned
+[ ] services validated
+[ ] monitoring returned to normal
+[ ] failures documented
+```
 
 ## References
 
-- Installing Ansible: <https://docs.ansible.com/projects/ansible/latest/installation_guide/intro_installation.html>
-- Building an inventory: <https://docs.ansible.com/projects/ansible/latest/getting_started/get_started_inventory.html>
-- Privilege escalation: <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_privilege_escalation.html>
-- `ansible.builtin.apt`: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/apt_module.html>
-- `ansible.builtin.dnf`: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/dnf_module.html>
-- `ansible.builtin.reboot`: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/reboot_module.html>
+- Ansible `raw` module: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/raw_module.html>
+- Ansible `dnf` module: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/dnf_module.html>
+- Ansible `reboot` module: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/reboot_module.html>
 - Rolling execution with `serial`: <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_strategies.html>
+- Privilege escalation: <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_privilege_escalation.html>
