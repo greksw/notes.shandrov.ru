@@ -13,6 +13,7 @@ export async function getStaticPaths() {
 
 const { note, alternateHref } = Astro.props;
 const { Content } = await render(note);
+const statusLabel = (status: 'current' | 'legacy' | 'lab') => ({ current: 'актуально', legacy: 'устаревшее', lab: 'лаборатория' }[status]);
 ---
 
 <BaseLayout title={`${note.data.title} · Tudor Shandrov`} description={note.data.description} lang="ru" alternateHref={alternateHref}>
@@ -22,7 +23,7 @@ const { Content } = await render(note);
     <h1>{note.data.title}</h1>
     <p class="lead">{note.data.description}</p>
     <div class="note-meta meta">
-      <span>Статус: {note.data.status}</span>
+      <span>Статус: {statusLabel(note.data.status)}</span>
       <span>Опубликовано: {note.data.published.toISOString().slice(0,10)}</span>
       <span>Обновлено: {note.data.updated.toISOString().slice(0,10)}</span>
     </div>
