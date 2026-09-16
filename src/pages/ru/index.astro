@@ -1,0 +1,40 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+const notes = (await getCollection('notes', ({ data }) => data.lang === 'ru')).sort((a: any, b: any) => b.data.updated.valueOf() - a.data.updated.valueOf());
+const featured = notes.filter((note: any) => note.data.featured).slice(0, 3);
+const latest = notes.slice(0, 6);
+const categories: string[] = [...new Set<string>(notes.map((note: any): string => String(note.data.category)))].sort();
+const noteHref = (id: string) => `/ru/notes/${id.replace(/^ru\//, '')}/`;
+const slug = (value: string) => value.toLowerCase().replaceAll(' ', '-').replaceAll('&', 'and');
+---
+
+<BaseLayout title="Tudor Shandrov · Технические заметки" description="Практические заметки по Linux, виртуализации, сетям, мониторингу, хранению данных и эксплуатации инфраструктуры." lang="ru" alternateHref="/">
+  <section class="hero">
+    <div class="shell">
+      <div class="eyebrow">База знаний по инфраструктурной инженерии</div>
+      <h1>Технические заметки для систем, которые должны продолжать работать.</h1>
+      <p class="lead">Практические заметки Tudor Shandrov по Linux, Proxmox, сетям, мониторингу, хранению данных, безопасности и эксплуатации production-инфраструктуры. Акцент на решениях, проверках и сценариях отказа, а не на бездумном копировании команд.</p>
+    </div>
+  </section>
+
+  <section class="section shell">
+    <div class="section-head"><h2>Избранные заметки</h2><a href="/ru/notes/">Все заметки →</a></div>
+    <div class="grid">
+      {featured.map((note: any) => <a class="card" href={noteHref(note.id)}><div class="meta"><span>{note.data.category}</span><span>Обновлено {note.data.updated.toISOString().slice(0,10)}</span></div><h3>{note.data.title}</h3><p>{note.data.description}</p><div class="tags">{note.data.tags.slice(0,4).map((tag: string) => <span class="tag">{tag}</span>)}</div></a>)}
+    </div>
+  </section>
+
+  <section class="section shell">
+    <div class="section-head"><h2>Последние</h2></div>
+    <div class="grid">
+      {latest.map((note: any) => <a class="card" href={noteHref(note.id)}><div class="meta"><span>{note.data.status}</span><span>{note.data.category}</span></div><h3>{note.data.title}</h3><p>{note.data.description}</p></a>)}
+    </div>
+  </section>
+
+  <section class="section shell">
+    <div class="section-head"><h2>Темы</h2><a href="/ru/topics/">Все темы →</a></div>
+    <div class="topic-list">{categories.map((category: string) => <a href={`/ru/topics/#${slug(category)}`}>{category}</a>)}</div>
+  </section>
+</BaseLayout>
