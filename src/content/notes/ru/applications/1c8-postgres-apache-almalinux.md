@@ -1,12 +1,12 @@
 ---
-title: "1С:Предприятие 8 + PostgreSQL + Apache на AlmaLinux"
-description: "Базовая схема развёртывания сервера 1С:Предприятие 8, совместимой с 1С PostgreSQL-базы и веб-публикации через Apache 2.4 на AlmaLinux с явной проверкой матрицы совместимости и границ rollback."
+title: "1С:Предприятие 8 + Postgres Pro 1C + Apache на AlmaLinux"
+description: "Production-схема развёртывания 1С:Предприятие 8.3.27, Postgres Pro 1C 17 и Apache 2.4 на AlmaLinux 9 с учётом service layout, web-публикации, monitoring и rollback."
 category: "Приложения и сервисы"
 tags: ["1c", "postgresql", "postgres-pro", "apache", "almalinux", "erp"]
 published: 2026-09-16
 updated: 2026-09-16
-status: lab
-testedOn: []
+status: current
+testedOn: ["AlmaLinux 9.8", "1С:Предприятие 8.3.27", "Postgres Pro 1C 17.10", "Apache 2.4.62"]
 featured: true
 lang: ru
 translationKey: "applications/1c8-postgres-apache-almalinux"
@@ -14,7 +14,7 @@ translationKey: "applications/1c8-postgres-apache-almalinux"
 
 ## Контекст
 
-Типовое Linux-развёртывание 1С:Предприятия обычно состоит из трёх отдельных слоёв:
+Этот стек реально используется в production как трёхслойная схема:
 
 ```text
 пользователи / web-клиенты
@@ -23,49 +23,59 @@ translationKey: "applications/1c8-postgres-apache-almalinux"
 Apache 2.4
           |
           v
-кластер серверов 1С:Предприятие 8
+сервер 1С:Предприятие 8
           |
           v
-PostgreSQL-совместимый сервер БД
+Postgres Pro 1C 17
 ```
 
-Эти слои нужно проверять независимо. Рабочая страница Apache не доказывает, что кластер 1С подключается к базе, а запущенный PostgreSQL не доказывает, что информационная база работает корректно.
-
-Эта заметка намеренно имеет статус **лаборатория**, пока не подтверждены точные версии платформы 1С, дистрибутива/версии PostgreSQL и AlmaLinux в целевом окружении.
-
-## Сначала проверяем матрицу совместимости
-
-Не начинайте с установки пакетов. Сначала зафиксируйте и проверьте совместимость конкретной комбинации:
+Подтверждённый baseline сервера:
 
 ```text
-версия платформы 1С:Предприятие
-Linux-дистрибутив и major version
-версия PostgreSQL/Postgres Pro
-версия и архитектура Apache
+OS:              AlmaLinux 9.8
+1С:Предприятие:  ветка 8.3.27
+PostgreSQL:      Postgres Pro 1C 17.10
+Apache:          2.4.62
 ```
 
-В документации 1С список поддерживаемых Linux-дистрибутивов зависит от версии платформы. AlmaLinux совместим с RHEL, но это не означает автоматическую формальную поддержку любой версии платформы 1С.
+На сервере установлено несколько build 1С 8.3.27, а default-instance включён для `8.3.27.2325`. Поэтому version-aware подход здесь обязателен: нельзя автоматически считать, что самый новый найденный binary всегда обслуживает production ИБ.
 
-Для БД используйте сборку PostgreSQL, которую поддерживает выбранная версия 1С. Не стоит автоматически считать штатный PostgreSQL из AlmaLinux AppStream подходящим для production 1С.
+## Production service layout
 
-Postgres Pro публикует отдельные рекомендации по 1С и поддерживает современные AlmaLinux 9/10 в актуальных версиях. Если выбран Postgres Pro, используйте конкретную редакцию и версию, соответствующую приложению и лицензированию.
+На хосте раздельно представлены сервисы 1С, базы и monitoring. Обезличенный layout:
 
-## Рекомендуемый порядок развёртывания
+```text
+postgrespro-1c-17.service
+srv1cv8-8.3.27.1719.service
+srv1cv8-8.3.27.1859.service
+srv1cv8-8.3.27.2325@.service
+srv1cv8-8.3.27.2325@default.service
+postgres_exporter.service
+fm-1c-metrics.service / fm-1c-metrics.timer
+```
+
+Postgres Pro работает отдельным systemd unit, PostgreSQL-метрики собираются через `postgres_exporter`, а для 1С есть отдельная metrics service/timer пара.
+
+Это удобно для диагностики: application, database, web и monitoring слои можно проверять независимо.
+
+## Порядок развёртывания
+
+Рабочая последовательность:
 
 ```text
 подготовка ОС
   -> locale / time / DNS
-  -> сервер БД
-  -> серверные пакеты 1С
-  -> проверка кластера 1С
-  -> тестовая информационная база
+  -> Postgres Pro 1C
+  -> пакеты сервера 1С
+  -> проверка сервисов 1С
+  -> проверка ИБ
   -> Apache
   -> web-публикация
   -> TLS / firewall
   -> backup / monitoring
 ```
 
-Не публикуйте web endpoint наружу до проверки backend-слоёв.
+Apache не должен быть первой точкой проверки. Сначала должен работать backend.
 
 ## Подготовка AlmaLinux
 
@@ -77,69 +87,67 @@ sudo hostnamectl status
 sudo timedatectl status
 ```
 
-Для 1С/PostgreSQL часто нужна русская UTF-8 locale. Проверка:
+До инициализации БД проверьте locale:
 
 ```bash
 locale -a | grep -Ei 'ru_RU.*utf'
 ```
 
-Если locale отсутствует, установите/сгенерируйте её до инициализации PostgreSQL-кластера.
+Для 1С/PostgreSQL русская UTF-8 locale влияет на collation и поведение приложения, поэтому это не декоративная настройка.
 
-Также проверьте прямое и обратное DNS-разрешение тех имён, которые реально будут использовать 1С и БД.
+Также проверьте прямое и обратное DNS-разрешение имён, которые реально используют 1С и БД.
 
-## Слой базы данных
+## Установка Postgres Pro 1C
 
-### Используем PostgreSQL, поддерживаемый 1С
+В production используется не штатный PostgreSQL из AlmaLinux AppStream, а специализированная сборка Postgres Pro 1C 17.
 
-Источник пакетов БД — часть архитектуры, а не случайный выбор после установки ОС.
-
-Возможные варианты: Postgres Pro или другая PostgreSQL-сборка, явно поддерживаемая выбранной платформой 1С.
-
-Зафиксируйте:
+Установленный package family:
 
 ```text
-продукт БД
-major/minor version
-репозиторий/источник пакетов
-путь к data directory
-locale при initdb
-метод аутентификации
-метод резервного копирования
+postgrespro-1c-17
+postgrespro-1c-17-client
+postgrespro-1c-17-contrib
+postgrespro-1c-17-libs
+postgrespro-1c-17-server
 ```
 
-### Инициализация с правильной locale
-
-Locale кластера БД важна. В рекомендациях Postgres Pro для 1С отдельно фигурирует русская UTF-8 locale.
-
-До инициализации:
+Проверка версии:
 
 ```bash
-locale
+psql --version
 ```
 
-Не создавайте production-кластер случайно под `C`/`POSIX`, рассчитывая исправить это позже.
+Подтверждённый baseline:
 
-### PostgreSQL должен оставаться внутренним сервисом
+```text
+psql (PostgreSQL) 17.10
+```
 
-Сервер БД обычно должен слушать только адреса, необходимые серверу 1С.
-
-Проверка:
+Проверка сервиса:
 
 ```bash
+systemctl status postgrespro-1c-17 --no-pager
 ss -lntp | grep 5432
 ```
 
-В `pg_hba.conf` ограничьте доступ адресами/подсетями серверов 1С.
+TCP/5432 должен оставаться внутренним сервисом. В `pg_hba.conf` разрешайте только реальные 1С application hosts и административные сети.
 
-TCP/5432 не должен быть опубликован в Internet.
+## Инициализация и тюнинг БД
 
-### Тюнинг — только под реальную нагрузку
+До `initdb` должны быть определены:
+
+```text
+путь к data directory
+locale / collation
+listen addresses
+pg_hba rules
+backup method
+WAL/archive policy
+```
 
 Не копируйте чужой `postgresql.conf` целиком.
 
-Для 1С особенно важны число соединений, память на запросы, WAL/checkpoints, temp workload и storage latency.
-
-Минимально проверьте:
+Для 1С минимум проверяйте:
 
 ```text
 max_connections
@@ -148,17 +156,15 @@ work_mem
 maintenance_work_mem
 effective_cache_size
 checkpoint/WAL settings
-locale/collation
+temporary workload
 storage latency
 ```
 
-Конкретные значения зависят от RAM, CPU, размера базы и количества пользователей.
+Postgres Pro публикует отдельные рекомендации для 1С; их лучше брать за основу и затем проверять под реальной нагрузкой.
 
-## Установка серверной части 1С:Предприятие 8
+## Установка сервера 1С:Предприятие
 
-Linux-пакеты 1С — проприетарное ПО. Получите дистрибутив из авторизованного источника 1С и передайте его на сервер по согласованному каналу.
-
-Не публикуйте RPM-пакеты 1С в открытом GitHub.
+Linux RPM 1С — проприетарные пакеты. Получайте их из авторизованного источника и не публикуйте в Git.
 
 Перед установкой:
 
@@ -173,19 +179,7 @@ rpm -qpi ./*.rpm | less
 sudo dnf install ./*.rpm
 ```
 
-Имена RPM меняются между версиями платформы, поэтому не стоит жёстко зашивать историческое имя пакета в automation без намеренного pinning.
-
-После установки:
-
-```bash
-rpm -qa | grep -Ei '1c|1cv8' | sort
-```
-
-## Находим фактически установленную версию 1С
-
-На Linux бинарники 1С обычно находятся в versioned path под `/opt/1cv8/x86_64/`.
-
-Не угадываем путь, а ищем:
+После установки лучше искать фактический layout, а не полагаться на исторические package names:
 
 ```bash
 find /opt/1cv8/x86_64 -maxdepth 2 -type f \
@@ -193,35 +187,39 @@ find /opt/1cv8/x86_64 -maxdepth 2 -type f \
   -print
 ```
 
-Для web-публикации нужно использовать `webinst` той же версии платформы, что обслуживает информационную базу.
+## Несколько build 1С на одном сервере
 
-## Проверяем сервис 1С
+На production-хосте присутствует несколько сервисных build 8.3.27. Поэтому любые операции, зависящие от бинарников платформы, нужно привязывать к конкретной версии.
 
-Имена systemd units могут отличаться между релизами и пакетными схемами. Сначала обнаруживаем:
+Проверка units:
 
 ```bash
 systemctl list-unit-files | grep -Ei '1c|srv1cv8'
 ```
 
-Затем:
+Проверка нужного instance:
 
 ```bash
-systemctl status '<обнаруженный-unit>' --no-pager
+systemctl status 'srv1cv8-8.3.27.2325@default.service' --no-pager
 ```
 
-Не автоматизируйте enable/start по угаданному unit name.
+Для `webinst` используйте ту же версию платформы, которая обслуживает целевую ИБ.
 
-Проверка сокетов:
+Не выбирайте binary только потому, что он последний в сортировке по версии.
+
+## Проверяем порты 1С
 
 ```bash
 ss -lntp | grep -E ':(1540|1541|156[0-9]|157[0-9]|158[0-9]|159[0-1])\b'
 ```
 
-Точный набор портов должен соответствовать конфигурации кластера и firewall policy.
+Точный разрешённый диапазон должен соответствовать конфигурации кластера и firewall policy.
 
-## Создание или подключение информационной базы
+Не открывайте весь диапазон всем сетям.
 
-Базу создавайте через штатный поддерживаемый механизм администрирования выбранной версии 1С.
+## Создание или подключение ИБ
+
+До Apache база должна открываться обычным клиентом 1С.
 
 Зафиксируйте:
 
@@ -237,9 +235,11 @@ locale/encoding
 
 Пароль БД не должен попадать в shell history, документацию и Git.
 
-До настройки Apache убедитесь, что база открывается обычным клиентом 1С.
+## Apache 2.4
 
-## Устанавливаем Apache 2.4
+Подтверждённая production-версия — Apache 2.4.62 из AlmaLinux.
+
+Установка:
 
 ```bash
 sudo dnf install -y httpd
@@ -249,25 +249,27 @@ sudo systemctl enable --now httpd
 Проверка:
 
 ```bash
+httpd -v
 apachectl configtest
 systemctl status httpd --no-pager
 ss -lntp | grep -E ':(80|443)\b'
 ```
 
-До готовности публикации держите доступ локальным или внутренним.
-
 ## Публикация ИБ через `webinst`
 
-Для Apache 2.4 используется режим `-apache24`.
+Для Apache 2.4 используется `-apache24`.
 
-Сначала находим бинарник:
+В production лучше указывать конкретный build явно:
 
 ```bash
-WEBINST=$(find /opt/1cv8/x86_64 -type f -name webinst | sort -V | tail -1)
-printf '%s\n' "$WEBINST"
+WEBINST='/opt/1cv8/x86_64/8.3.27.2325/webinst'
 ```
 
-В production не выбирайте автоматически самый новый `webinst`, если на сервере установлено несколько версий платформы. Нужна версия, совпадающая с сервером 1С.
+Проверка:
+
+```bash
+test -x "$WEBINST"
+```
 
 Каталог публикации:
 
@@ -275,7 +277,7 @@ printf '%s\n' "$WEBINST"
 sudo install -d -o root -g apache -m 0750 /var/www/1c/demo
 ```
 
-Пример:
+Пример публикации с обезличенными значениями:
 
 ```bash
 sudo "$WEBINST" \
@@ -287,24 +289,22 @@ sudo "$WEBINST" \
   -confpath /etc/httpd/conf/httpd.conf
 ```
 
-В публичной документации используйте placeholders вместо реальных имён серверов и ИБ.
-
-После публикации:
+Затем:
 
 ```bash
 sudo apachectl configtest
 sudo systemctl reload httpd
 ```
 
-Документация 1С также требует, чтобы Apache user имел read/execute-доступ к каталогу бинарников соответствующей версии платформы 1С.
+Apache account должен иметь read/execute-доступ к web extension выбранной версии 1С.
 
-## Проверяем конфигурацию Apache
+## Проверка Apache-конфигурации
 
 ```bash
 grep -RniE '1cv8|wsap|demo' /etc/httpd /var/www/1c 2>/dev/null
 ```
 
-Убедитесь, что путь к web extension существует и его архитектура совпадает с архитектурой Apache.
+Проверьте, что referenced web extension существует и его архитектура совпадает с Apache.
 
 ## SELinux
 
@@ -316,50 +316,74 @@ grep -RniE '1cv8|wsap|demo' /etc/httpd /var/www/1c 2>/dev/null
 getenforce
 ```
 
-Если Apache работает, а web-публикация 1С нет, смотрим AVC:
+Если Apache работает, а публикация 1С нет:
 
 ```bash
 sudo ausearch -m AVC,USER_AVC -ts recent
 ```
 
-Дальше исправляем контексты, права или создаём узкую local policy под реальный denial.
+Исправляйте file contexts, permissions или создавайте узкую local policy по фактическому denial.
 
-`setenforce 0` допустим только как временная диагностическая проверка, не как итоговая конфигурация.
+`setenforce 0` допустим только как временная диагностическая проверка.
 
-## Firewall
+## Firewall model
 
-Открывайте только реально необходимые направления.
+Минимальная схема доступа:
 
 ```text
-client -> Apache: 443
-1C client/admin network -> порты кластера 1С
-1C application tier -> PostgreSQL: 5432
-Internet -> PostgreSQL: никогда
+web clients              -> Apache: 443
+1C client/admin networks -> необходимые порты 1С
+1C application tier      -> Postgres Pro: 5432
+Internet                 -> PostgreSQL: никогда
 ```
 
-Если web-клиент нужен извне, используйте HTTPS и стандартный процесс управления сертификатами.
+Если web-клиент публикуется наружу — используйте HTTPS и стандартный lifecycle сертификатов.
+
+## Monitoring
+
+На production-хосте уже есть:
+
+```text
+postgres_exporter.service
+fm-1c-metrics.service
+fm-1c-metrics.timer
+```
+
+Минимально имеет смысл контролировать:
+
+```text
+доступность PostgreSQL
+connections
+transactions / locks
+WAL / checkpoint pressure
+размер БД
+доступность процессов 1С
+порты кластера 1С
+Apache
+HTTP response web-публикации
+CPU / RAM / storage latency
+```
+
+Monitoring должен видеть backend degradation, а не только факт ответа Apache.
 
 ## Последовательность проверки
 
-### PostgreSQL
+Postgres Pro:
 
 ```bash
-systemctl --no-pager --type=service | grep -Ei 'postgres|pgpro'
+systemctl is-active postgrespro-1c-17
+psql --version
 ss -lntp | grep 5432
 ```
 
-Затем проверьте подключение с сервера 1С утверждённой учёткой БД.
-
-### Сервер 1С
+1С:
 
 ```bash
-systemctl list-units --type=service | grep -Ei '1c|srv1cv8'
+systemctl status 'srv1cv8-8.3.27.2325@default.service' --no-pager
 ss -lntp | grep -E ':(1540|1541)\b'
 ```
 
-Сначала база должна открываться обычным клиентом 1С.
-
-### Apache
+Apache:
 
 ```bash
 apachectl configtest
@@ -367,76 +391,50 @@ systemctl is-active httpd
 curl -I http://127.0.0.1/
 ```
 
-### Web-публикация
-
-Проверьте реальный URI и выполните полноценный login в приложение. HTTP 200/302 сам по себе недостаточен.
+После этого проверьте реальный URI и выполните полноценный login в 1С. HTTP 200/302 сам по себе недостаточен.
 
 ## Backup и rollback
 
-До production cutover нужны независимые recovery paths для всех трёх слоёв.
+Для каждого слоя нужен отдельный recovery path.
 
-### База данных
-
-Выберите метод под размер БД и RPO:
+Для БД:
 
 ```text
-logical dump — для небольших/простых случаев
-physical/base backup — для крупных production БД
+logical dump — небольшие/простые случаи
+physical/base backup — крупные production БД
 WAL/archive — когда нужен PITR
 ```
 
-### Конфигурация 1С
-
-Сохраняйте:
+Также сохраняйте:
 
 ```text
-версию/пакеты платформы 1С
-service overrides и связанные системные настройки
+версию и package information 1С
+service overrides
 настройки кластера
 параметры регистрации ИБ
-собственные scripts
+Apache config
+каталоги web-публикаций
+собственные monitoring scripts
 ```
 
-### Apache
-
-Перед повторным запуском `webinst` или сменой версии сохраняйте конфиги Apache и каталоги публикаций.
-
-Rollback должен быть возможен без полной переустановки всего стека.
+Не объединяйте upgrade 1С, major upgrade Postgres Pro и переработку Apache в один rollback unit.
 
 ## Типовые ошибки
 
 Не стоит:
 
-- ставить штатный PostgreSQL без проверки поддержки 1С;
-- инициализировать PostgreSQL с неправильной locale;
-- открывать 5432 широким сетям;
-- использовать `webinst` от другой версии платформы;
-- копировать web-публикацию между несовместимыми версиями;
+- использовать stock PostgreSQL без проверки совместимости с 1С;
+- инициализировать БД с неправильной locale;
+- широко открывать 5432;
+- использовать `webinst` от другого установленного build 1С;
 - отключать SELinux вместо исправления policy;
-- открывать весь диапазон портов 1С всем сетям;
+- открывать полный диапазон портов 1С всем сетям;
 - считать рабочую страницу Apache доказательством здоровья ИБ;
-- одновременно обновлять 1С, PostgreSQL и Apache без независимого rollback boundary.
-
-## Что снять с реального сервера
-
-Чтобы перевести статью из `lab` в `current`, достаточно подтвердить реальные не секретные версии:
-
-```bash
-cat /etc/os-release | grep -E '^(PRETTY_NAME|VERSION_ID)='
-httpd -v
-rpm -qa | grep -Ei '1c|1cv8' | sort
-systemctl list-unit-files | grep -Ei '1c|srv1cv8'
-systemctl --no-pager --type=service | grep -Ei 'postgres|pgpro'
-```
-
-Версию продукта БД также нужно снять отдельно, без публикации паролей.
-
-После этого metadata и команды можно привязать к реальной production-схеме.
+- одновременно менять 1С, Postgres Pro и Apache без независимых rollback points.
 
 ## References
 
 - 1C:Enterprise: настройка web-сервера на Linux / Apache 2.4: <https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.27_Administrator_Guide/Chapter_8.Setting_up_web_services_for_1C_Enterprise/8.4._Setting_up_client_application_support/8.4.2._On_Linux/>
 - 1C `webinst`: <https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.27_Administrator_Guide/Chapter_8.Setting_up_web_services_for_1C_Enterprise/8.3._Publication_types/8.3.3._Webinst_utility/>
-- 1C: общая процедура web-публикации: <https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.22_Administrator_Guide/Chapter_8._Setting_up_web_services_for_1C_Enterprise/8.3._Publication_types/8.3.1._General_publication_procedure/>
-- Postgres Pro: настройка для 1С: <https://postgrespro.ru/docs/enterprise/16/config-one-c>
+- Postgres Pro: настройка для 1С: <https://postgrespro.ru/docs/enterprise/17/config-one-c>
 - Postgres Pro: установка и поддерживаемые Linux-дистрибутивы: <https://postgrespro.ru/docs/enterprise/17/binary-installation-on-linux>
