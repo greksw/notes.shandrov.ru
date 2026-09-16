@@ -1,6 +1,6 @@
 ---
-title: "MikroTik RouterOS 7: multi-WAN policy routing и failover по VLAN"
-description: "Production-подход к распределению разных VLAN по предпочитаемым uplink с управляемым failover и проверяемым egress path."
+title: "MikroTik RouterOS 7: Multi-WAN, маршрутизация по политикам и отказоустойчивость VLAN"
+description: "Практическая схема распределения VLAN по предпочтительным uplink с управляемым failover и проверяемым выходом в Internet."
 category: "Сети"
 tags: ["mikrotik", "routeros", "multi-wan", "policy-routing", "failover", "vlan"]
 published: 2026-09-16
@@ -14,18 +14,18 @@ translationKey: "networking/mikrotik-routeros7-multiwan-policy-routing"
 
 ## Контекст
 
-Multi-WAN становится сложным в эксплуатации, когда политика резервирования не выражена явно. Если все клиенты просто следуют main default route, через несколько месяцев уже трудно ответить на вопросы:
+Multi-WAN становится сложным в эксплуатации, когда политика резервирования не выражена явно. Через несколько месяцев уже трудно ответить:
 
 - какой uplink предпочитает конкретный VLAN;
-- через какого провайдера он должен выйти при отказе primary;
-- должны ли административные сети использовать другой backup;
+- через какого провайдера он должен выйти при отказе основного канала;
+- должны ли административные сети использовать отдельный резерв;
 - как доказать, через какого провайдера реально выходит конкретный host.
 
-В этой схеме выбор WAN оформляется как явная routing policy: source networks сопоставляются отдельным routing tables, а в каждом table задан собственный порядок default routes.
+Практичный подход — выразить это через отдельные routing tables и `/routing/rule`, чтобы намерение было видно непосредственно в конфигурации.
 
 ## Пример политики
 
-Предположим три uplink:
+Пусть есть три uplink:
 
 | Uplink | Роль |
 | --- | --- |
@@ -33,15 +33,15 @@ Multi-WAN становится сложным в эксплуатации, ко�
 | `WAN_B` | общий резерв |
 | `WAN_C` | отдельный резерв для выбранных VLAN |
 
-И внутренние сети:
+И три группы сетей:
 
 | Сеть | Предпочитаемый путь |
 | --- | --- |
 | пользовательские VLAN | `WAN_A` → `WAN_B` |
-| admin VLAN | `WAN_A` → `WAN_C` |
-| service VLAN | `WAN_A` → `WAN_C` |
+| административные VLAN | `WAN_A` → `WAN_C` |
+| сервисные VLAN | `WAN_A` → `WAN_C` |
 
-Смысл в том, чтобы намерение читалось из конфигурации, а не восстанавливалось по NAT counters и connection tracking.
+Смысл в том, чтобы политика читалась из конфигурации, а не восстанавливалась по NAT counters и connection tracking.
 
 ## Routing tables в RouterOS 7
 
@@ -53,9 +53,9 @@ add name=rt_wan_ab fib
 add name=rt_wan_ac fib
 ```
 
-Для простого source-based steering `/routing/rule` обычно понятнее mangle. Mangle нужен, когда условия сложнее: connection classification, protocol/port, per-connection routing и т.п.
+Для простого source-based steering `/routing/rule` обычно понятнее mangle. Mangle имеет смысл, когда классификация сложнее: protocol/port, connection marking, PCC и другие условия.
 
-Не смешивайте два механизма без явной причины.
+Не держите два независимых механизма policy routing без явной причины.
 
 ## Default routes в policy tables
 
@@ -79,11 +79,11 @@ add dst-address=0.0.0.0/0 gateway=192.0.2.1@main \
     routing-table=rt_wan_ac distance=2 check-gateway=ping
 ```
 
-Суффикс `@main` важен, когда next hop разрешается через main table. Custom table не должен существовать в отрыве от корректной main routing table.
+Суффикс `@main` важен, когда next hop разрешается через main table. Пользовательская таблица не должна существовать в отрыве от корректной основной таблицы маршрутизации.
 
 ## Main table должна оставаться рабочей
 
-Router сам нуждается в предсказуемом default route, а custom tables зависят от разрешения next hop.
+Сам router тоже должен иметь предсказуемый default route.
 
 ```routeros
 /ip/route
@@ -97,7 +97,7 @@ add dst-address=0.0.0.0/0 gateway=203.0.113.1 distance=2 check-gateway=ping
 
 Source-based rule, указывающее в таблицу с default route, может случайно перехватить внутренний трафик.
 
-Поэтому internal destinations обрабатываются раньше:
+Поэтому внутренние назначения обрабатываются раньше:
 
 ```routeros
 /routing/rule
@@ -106,9 +106,9 @@ add dst-address=172.16.0.0/12 action=lookup table=main
 add dst-address=192.168.0.0/16 action=lookup table=main
 ```
 
-В реальной инфраструктуре лучше использовать более узкие фактические префиксы.
+В реальной инфраструктуре лучше использовать фактические, более узкие префиксы.
 
-## Сопоставьте VLAN с policy tables
+## Сопоставьте VLAN с routing tables
 
 Пользовательские сети:
 
@@ -118,7 +118,7 @@ add src-address=10.20.10.0/24 action=lookup table=rt_wan_ab
 add src-address=10.20.11.0/24 action=lookup table=rt_wan_ab
 ```
 
-Admin/service сети:
+Административные и сервисные сети:
 
 ```routeros
 /routing/rule
@@ -126,11 +126,13 @@ add src-address=10.20.90.0/24 action=lookup table=rt_wan_ac
 add src-address=10.20.91.0/24 action=lookup table=rt_wan_ac
 ```
 
-`action=lookup` допускает продолжение поиска маршрута, если выбранная таблица не может разрешить destination. `lookup-only-in-table` создаёт более жёсткую границу и может быть полезен для fail-closed поведения. Выбирайте сознательно.
+`action=lookup` допускает продолжение поиска, если выбранная таблица не нашла маршрут. `lookup-only-in-table` создаёт более жёсткую границу и подходит для fail-closed поведения.
 
-## NAT должен соответствовать uplink
+Выбирайте это сознательно.
 
-Routing и NAT — разные подсистемы. Можно выбрать правильный route и всё равно потерять Internet access, если srcnat не покрывает фактический egress interface.
+## NAT должен соответствовать выбранному uplink
+
+Routing и NAT — разные подсистемы. Можно выбрать правильный маршрут и всё равно потерять Internet access, если srcnat не соответствует фактическому egress interface.
 
 Для простого случая удобно использовать interface list:
 
@@ -146,15 +148,15 @@ add list=WAN interface=ether3
 add chain=srcnat out-interface-list=WAN action=masquerade
 ```
 
-Если используются статические публичные адреса или provider-specific srcnat, оставляйте их явными.
+Если используются статические публичные адреса или provider-specific srcnat, оставляйте правила явными.
 
-## `check-gateway=ping` — не полная проверка Internet
+## `check-gateway=ping` не проверяет весь Internet
 
-Ping gateway проверяет только доступность next hop. Провайдер может отвечать на gateway, но иметь проблемы выше по сети.
+Ping gateway проверяет только next hop. Провайдер может отвечать на gateway, но иметь проблемы дальше по сети.
 
-Если это существенный failure mode, используйте более сильную health-check схему: recursive routes, внешние probes, Netwatch или другой контролируемый механизм.
+Если такой failure mode важен, используйте более сильную health-check схему: recursive routes, Netwatch, внешние probes или другой контролируемый механизм.
 
-Но не усложняйте failover без необходимости. Понятная простая схема лучше красивой, но неочевидной цепочки recursive routes.
+Не усложняйте failover без необходимости. Простая понятная схема лучше сложной цепочки, смысл которой теряется через полгода.
 
 ## Проверяйте routing tables напрямую
 
@@ -164,13 +166,13 @@ Ping gateway проверяет только доступность next hop. П
 /routing/rule/print detail
 ```
 
-Под normal state должен быть активен primary route, а backup должен быть доступен с ожидаемым distance.
+В normal state должен быть активен основной route, а backup должен оставаться доступным с ожидаемым distance.
 
-Порядок rules — часть политики. Internal-destination rules должны стоять раньше generic source rules.
+Порядок routing rules — часть политики. Правила для внутренних destination должны стоять раньше общих source rules.
 
-## Проверка с реального host
+## Проверяйте с реального host
 
-Самая важная проверка — фактический egress path с host внутри нужного VLAN.
+Главная проверка — фактический выход в Internet с host внутри нужного VLAN.
 
 Например:
 
@@ -181,48 +183,48 @@ curl -4 https://ifconfig.me
 Проверяйте минимум три состояния:
 
 1. все uplink исправны;
-2. primary недоступен;
-3. primary восстановлен.
+2. основной uplink недоступен;
+3. основной uplink восстановлен.
 
 Host должен перейти на ожидаемый backup и затем вернуться на preferred uplink.
 
-Это ловит проблемы, которые не видно по route flags: NAT mismatch, stale connections, лишние policy matches.
+Так выявляются ошибки, которые не видны только по route flags: неверный NAT, старые connections и лишние policy matches.
 
 ## Existing connections при failover
 
-Failover не гарантирует сохранение уже установленных TCP sessions. При смене провайдера обычно меняется public source address.
+Failover не гарантирует сохранение уже установленных TCP sessions. При смене провайдера обычно меняется публичный source address.
 
-Поэтому нормальная модель для простого NAT failover:
+Нормальная модель для простого NAT failover:
 
-- новые соединения работают через backup;
+- новые соединения идут через backup;
 - старые могут потребовать reconnect;
 - после восстановления primary новые соединения возвращаются на preferred path.
 
 Это не application-level HA.
 
-## Тестируйте по одному uplink
+## Тестируйте отказ по одному uplink
 
-При commissioning отключайте один WAN за раз:
+При commissioning отключайте один WAN за раз и проверяйте route state:
 
 ```routeros
 /ip/route/print where dst-address=0.0.0.0/0
 ```
 
-После этого проверяйте host из каждой policy class.
+Затем тестируйте host из каждой policy class.
 
 Если `WAN_A` недоступен:
 
-- user VLAN должны выйти через `WAN_B`;
+- пользовательские VLAN должны выйти через `WAN_B`;
 - admin/service VLAN — через `WAN_C`;
 - inter-VLAN и site-to-site трафик должен продолжать идти по внутренним маршрутам.
 
-Если внутренний destination начал уходить в Internet provider — останавливайте rollout и исправляйте rule ordering.
+Если внутренний destination начал уходить через Internet provider, останавливайте rollout и исправляйте порядок routing rules.
 
 ## Failback
 
-После возврата primary проверьте новые соединения. Existing connection-tracking entries могут продолжать жить на старом path до timeout.
+После возврата primary проверяйте новые соединения. Старые записи connection tracking могут продолжать жить на резервном пути до timeout.
 
-Не делайте вывод о failback по старому TCP session.
+Не оценивайте failback по одному старому TCP session.
 
 ## Troubleshooting
 
@@ -234,13 +236,13 @@ Failover не гарантирует сохранение уже установ�
 /ip/firewall/connection/print where src-address~"10.20."
 ```
 
-Задавайте вопросы по порядку:
+Проверяйте по порядку:
 
 - source попал в нужное rule;
 - выбранная table разрешает default route;
 - next hop доступен;
-- NAT совпал с egress interface;
-- старое connection tracking не удерживает previous path.
+- NAT соответствует egress interface;
+- старое connection tracking не удерживает предыдущий путь.
 
 Не очищайте всю connection table как первый шаг на production-router.
 
@@ -248,9 +250,9 @@ Failover не гарантирует сохранение уже установ�
 
 Routing rules хорошо подходят для политики по source subnet, destination и ingress interface.
 
-Mangle нужен для более сложной классификации. Если mangle выставил routing mark и маршрут разрешился, это может переопределить обычные routing rules.
+Mangle нужен для более сложной классификации. Если mangle уже выставляет routing mark и маршрут разрешился, это может переопределить обычные routing rules.
 
-Перед миграцией модели всегда проверяйте оба места:
+Перед изменением модели проверяйте оба места:
 
 ```routeros
 /ip/firewall/mangle/print detail
@@ -273,16 +275,16 @@ Mangle нужен для более сложной классификации. �
 
 При удалённой работе держите Safe Mode доступным.
 
-## Stop conditions
+## Условия остановки
 
 Останавливайте rollout, если:
 
 - management traffic пошёл через неожиданный WAN;
-- internal/site-to-site traffic захватился Internet policy table;
+- внутренний или site-to-site трафик захвачен Internet policy table;
 - backup route не работает ещё до отключения primary;
 - NAT не покрывает выбранный egress;
 - DNS зависит только от одного provider path;
-- route table переключилась, а реальный host egress — нет;
+- routing table переключилась, а реальный host egress — нет;
 - mangle и routing rules влияют на один поток без документированной причины.
 
-Failover design считается завершённым только после намеренного тестирования failure state.
+Схема failover считается завершённой только после намеренного тестирования реального отказа.

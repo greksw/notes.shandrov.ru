@@ -1,6 +1,6 @@
 ---
-title: "Мониторинг Proxmox VE в Prometheus через API token и доверенный CA"
-description: "Production-подход к сбору метрик Proxmox без отключения TLS verification и без использования полноценной administrator account."
+title: "Мониторинг Proxmox VE в Prometheus через API-токен и доверенный CA"
+description: "Практический подход к сбору метрик Proxmox без отключения проверки TLS и без использования полноценной административной учётной записи."
 category: "Мониторинг и безопасность"
 tags: ["proxmox", "prometheus", "tls", "api", "monitoring"]
 published: 2026-09-16
@@ -14,52 +14,68 @@ translationKey: "monitoring/proxmox-prometheus-api-ca"
 
 ## Контекст
 
-Prometheus exporter нужен доступ к Proxmox API, но ради мониторинга не следует использовать переиспользуемый administrator password, а TLS verification не нужно отключать только для того, чтобы HTTPS-запросы начали работать.
+Экспортёру Prometheus нужен доступ к API Proxmox, но ради мониторинга не следует хранить пароль администратора или отключать проверку TLS только для того, чтобы HTTPS-запросы начали работать.
 
-Здесь используются три независимых уровня:
+Практичная схема разделяет три задачи:
 
-1. отдельная Proxmox account с read-only permissions;
-2. API token, привязанный к этой account;
-3. явное доверие к Proxmox cluster CA на monitoring host.
+1. отдельная учётная запись Proxmox с правами только на чтение;
+2. отдельный API-токен для экспортёра;
+3. явное доверие к корневому CA кластера Proxmox на сервере мониторинга.
 
 ## Модель доступа
 
-Создайте отдельную monitoring identity в Proxmox и выдайте только те права, которые нужны для inventory и сбора метрик. Для read-only exporter роль `PVEAuditor` — более подходящая baseline, чем `Administrator`.
+Создайте отдельную учётную запись для мониторинга и выдайте только права, необходимые для чтения инвентаря и метрик. Для read-only экспортёра роль `PVEAuditor` подходит значительно лучше, чем `Administrator`.
 
-Для exporter используйте отдельный API token. Разделение token и user account позволяет независимо отзывать и ротировать token и не хранить interactive password в exporter configuration.
+Для экспортёра используйте отдельный API-токен. Это позволяет независимо отзывать и ротировать токен и не хранить интерактивный пароль пользователя в конфигурации сервиса.
 
-## TLS trust
+## Доверие к TLS
 
 Не используйте `verify_ssl: false` как постоянное решение.
 
-Экспортируйте соответствующий Proxmox root CA, передайте его на monitoring system по доверенному administrative channel и установите как root-owned certificate file. Настройте exporter process на использование этого CA bundle при HTTPS-соединениях с Proxmox API.
+Экспортируйте корневой сертификат CA Proxmox, передайте его на сервер мониторинга по доверенному административному каналу и установите как файл, доступный только необходимому сервису.
 
-Для Python-based exporter это можно сделать через environment процесса, например задав `REQUESTS_CA_BUNDLE` с путём к установленному CA file.
+Для Python-based экспортёра можно указать CA bundle через переменную окружения:
+
+```text
+REQUESTS_CA_BUNDLE=/path/to/proxmox-ca.pem
+```
+
+После этого HTTPS-соединение к API должно проходить с нормальной проверкой сертификата.
 
 ## Схема Prometheus
 
-Если это упрощает alerting и dashboards, разделяйте cluster-level и node-level collection логически. Типичная схема использует отдельный service port для Proxmox exporter и явные Prometheus jobs как для Proxmox API, так и для обычных `node_exporter` targets на каждом hypervisor.
+Полезно логически разделять метрики кластера и метрики отдельных узлов.
 
-Это позволяет различать разные типы отказов:
+Обычно это означает:
 
-- host metrics отсутствуют, но API здоров;
-- API metrics отсутствуют, но nodes доступны;
-- недоступен один node;
-- collection сломан на уровне всего cluster.
+- отдельный job для Proxmox API exporter;
+- отдельный `node_exporter` на каждом гипервизоре;
+- независимые targets в Prometheus.
+
+Так проще отличить разные типы отказов:
+
+- host metrics отсутствуют, но API кластера доступен;
+- API metrics пропали, но сами узлы доступны;
+- недоступен один конкретный гипервизор;
+- сломался сбор метрик на уровне всего кластера.
 
 ## Проверка
 
-Validation не должна ограничиваться ответом HTTP 200.
+Не ограничивайтесь ответом HTTP 200.
 
-- убедитесь, что exporter service работает под ожидаемой account;
-- проверьте, что CA bundle действительно используется и certificate errors не подавляются;
-- запросите exporter endpoint напрямую;
-- выполните `promtool check config` перед reload Prometheus;
-- убедитесь, что все ожидаемые Proxmox и node-exporter targets находятся в состоянии `UP`;
-- сопоставьте возвращаемый список nodes и VM с реальным cluster inventory.
+Проверьте:
+
+- что exporter service работает под ожидаемой учётной записью;
+- что используется именно доверенный CA bundle, а ошибки сертификатов не подавляются;
+- что endpoint экспортёра отвечает напрямую;
+- что `promtool check config` проходит до reload Prometheus;
+- что все ожидаемые Proxmox и node-exporter targets находятся в состоянии `UP`;
+- что список узлов и VM в метриках соответствует реальному инвентарю кластера.
 
 ## Заметки по безопасности
 
-API token остаётся secret, даже если его permissions read-only. Храните его вне repository, ограничьте права на configuration file и ротируйте token при любом exposure.
+API-токен остаётся секретом, даже если его права ограничены чтением.
 
-Read-only token вместе с проверяемым TLS создаёт существенно более безопасную failure boundary, чем administrator credential в сочетании с отключённой проверкой сертификатов.
+Храните его вне repository, ограничьте права на файл конфигурации и ротируйте при любом подозрении на утечку.
+
+Read-only токен в сочетании с нормальной проверкой TLS даёт существенно лучшую границу риска, чем административная учётная запись вместе с отключённой проверкой сертификатов.

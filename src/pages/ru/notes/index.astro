@@ -1,10 +1,12 @@
 ---
 import { getCollection } from 'astro:content';
 import BaseLayout from '../../../layouts/BaseLayout.astro';
+
 const notes = (await getCollection('notes', ({ data }) => data.lang === 'ru')).sort((a,b) => b.data.updated.valueOf() - a.data.updated.valueOf());
 const noteHref = (id: string) => `/ru/notes/${id.replace(/^ru\//, '')}/`;
+const statusLabel = (status: 'current' | 'legacy' | 'lab') => ({ current: 'актуально', legacy: 'устаревшее', lab: 'лаборатория' }[status]);
 ---
 <BaseLayout title="Заметки · Tudor Shandrov" description="Практические заметки по эксплуатации инфраструктуры." lang="ru" alternateHref="/notes/">
-  <section class="hero"><div class="shell"><div class="eyebrow">Заметки</div><h1>Эксплуатационные знания, зафиксированные явно.</h1><p class="lead">Актуальные runbook, разборы неисправностей и архитектурные заметки. Устаревшие материалы помечаются явно, а не выдаются за текущую практику.</p></div></section>
-  <section class="section shell"><div class="grid">{notes.map((note) => <a class="card" href={noteHref(note.id)}><div class="meta"><span>{note.data.status}</span><span>{note.data.category}</span><span>{note.data.updated.toISOString().slice(0,10)}</span></div><h3>{note.data.title}</h3><p>{note.data.description}</p><div class="tags">{note.data.tags.map((tag) => <span class="tag">{tag}</span>)}</div></a>)}</div></section>
+  <section class="hero"><div class="shell"><div class="eyebrow">Заметки</div><h1>Эксплуатационные знания, зафиксированные явно.</h1><p class="lead">Актуальные инструкции, разборы неисправностей и архитектурные заметки. Устаревшие материалы помечаются явно, а не выдаются за текущую практику.</p></div></section>
+  <section class="section shell"><div class="grid">{notes.map((note) => <a class="card" href={noteHref(note.id)}><div class="meta"><span>{statusLabel(note.data.status)}</span><span>{note.data.category}</span><span>{note.data.updated.toISOString().slice(0,10)}</span></div><h3>{note.data.title}</h3><p>{note.data.description}</p><div class="tags">{note.data.tags.map((tag) => <span class="tag">{tag}</span>)}</div></a>)}</div></section>
 </BaseLayout>

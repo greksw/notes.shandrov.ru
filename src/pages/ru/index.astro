@@ -8,6 +8,7 @@ const latest = notes.slice(0, 6);
 const categories: string[] = [...new Set<string>(notes.map((note: any): string => String(note.data.category)))].sort();
 const noteHref = (id: string) => `/ru/notes/${id.replace(/^ru\//, '')}/`;
 const slug = (value: string) => value.toLowerCase().replaceAll(' ', '-').replaceAll('&', 'and');
+const statusLabel = (status: 'current' | 'legacy' | 'lab') => ({ current: 'актуально', legacy: 'устаревшее', lab: 'лаборатория' }[status]);
 ---
 
 <BaseLayout title="Tudor Shandrov · Технические заметки" description="Практические заметки по Linux, виртуализации, сетям, мониторингу, хранению данных и эксплуатации инфраструктуры." lang="ru" alternateHref="/">
@@ -15,7 +16,7 @@ const slug = (value: string) => value.toLowerCase().replaceAll(' ', '-').replace
     <div class="shell">
       <div class="eyebrow">База знаний по инфраструктурной инженерии</div>
       <h1>Технические заметки для систем, которые должны продолжать работать.</h1>
-      <p class="lead">Практические заметки Tudor Shandrov по Linux, Proxmox, сетям, мониторингу, хранению данных, безопасности и эксплуатации production-инфраструктуры. Акцент на решениях, проверках и сценариях отказа, а не на бездумном копировании команд.</p>
+      <p class="lead">Практические заметки Tudor Shandrov по Linux, Proxmox, сетям, мониторингу, хранению данных, безопасности и эксплуатации производственной инфраструктуры. Акцент на решениях, проверках и сценариях отказа, а не на бездумном копировании команд.</p>
     </div>
   </section>
 
@@ -29,7 +30,7 @@ const slug = (value: string) => value.toLowerCase().replaceAll(' ', '-').replace
   <section class="section shell">
     <div class="section-head"><h2>Последние</h2></div>
     <div class="grid">
-      {latest.map((note: any) => <a class="card" href={noteHref(note.id)}><div class="meta"><span>{note.data.status}</span><span>{note.data.category}</span></div><h3>{note.data.title}</h3><p>{note.data.description}</p></a>)}
+      {latest.map((note: any) => <a class="card" href={noteHref(note.id)}><div class="meta"><span>{statusLabel(note.data.status)}</span><span>{note.data.category}</span></div><h3>{note.data.title}</h3><p>{note.data.description}</p></a>)}
     </div>
   </section>
 

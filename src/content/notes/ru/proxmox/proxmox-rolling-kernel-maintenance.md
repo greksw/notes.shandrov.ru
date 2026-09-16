@@ -1,6 +1,6 @@
 ---
-title: "Proxmox VE: rolling-обновление ядра с однократным fallback"
-description: "Production-runbook для поузлового изменения kernel в многоузловом Proxmox-кластере с сохранением quorum, эвакуацией workloads и быстрым rollback."
+title: "Proxmox VE: поузловое обновление ядра с однократным откатом"
+description: "Практический runbook для обновления ядра в многоузловом Proxmox-кластере с сохранением кворума, эвакуацией нагрузок и быстрым откатом."
 category: "Proxmox и виртуализация"
 tags: ["proxmox", "kernel", "cluster", "maintenance", "quorum", "rollback"]
 published: 2026-09-16
@@ -14,48 +14,53 @@ translationKey: "proxmox/proxmox-rolling-kernel-maintenance"
 
 ## Контекст
 
-Kernel maintenance в Proxmox VE — это не столько задача `apt`, сколько контролируемое изменение booted kernel при сохранении quorum, доступности workloads, storage и понятного пути rollback.
+Обновление ядра в Proxmox VE — это не просто задача `apt`. Основной риск связан с перезагрузкой узлов при сохранении кворума, доступности VM/CT, storage и понятного пути отката.
 
-Практический production-подход консервативен: меняется один node за раз, целевой kernel проверяется до reboot, workloads эвакуируются, первый node используется как canary, а предыдущий kernel остаётся доступен через GRUB.
+Практичный подход консервативен:
 
-Та же схема подходит и для обычного rollout нового kernel, и для проверки другого known-good kernel после regression.
+- менять по одному узлу;
+- проверять целевое ядро до reboot;
+- заранее эвакуировать рабочие нагрузки;
+- первый узел использовать как canary;
+- не удалять предыдущее рабочее ядро до завершения rollout.
+
+Та же схема подходит и для обычного обновления, и для проверки другого known-good kernel после regression.
 
 ## Инварианты обслуживания
 
-Не переходите к следующему node, пока для предыдущего не выполнены все условия:
+Не переходите к следующему узлу, пока для предыдущего не подтверждено:
 
-- cluster quorate;
-- восстановилось ожидаемое количество nodes;
-- Corosync и Proxmox management services healthy;
-- реально загружен требуемый kernel;
-- guest/storage state нормален;
+- cluster остаётся quorate;
+- восстановилось ожидаемое количество узлов;
+- Corosync и службы Proxmox работают;
+- загружено требуемое ядро;
+- storage доступен;
+- VM/CT работают нормально;
 - не появились новые критические systemd failures;
-- rollback kernel всё ещё установлен.
+- предыдущее рабочее ядро всё ещё доступно для отката.
 
-Несколько nodes не перезагружаются параллельно только потому, что математически quorum это позволяет.
+Не перезагружайте несколько узлов одновременно только потому, что математически кворум это позволяет.
 
-## Целевой kernel
+## Целевое ядро
 
 ```bash
 TARGET_KERNEL="6.17.13-21-pve"
 ```
 
-Версия здесь — пример конкретного проверенного target. В реальном maintenance window подставьте выбранную версию.
+Версия здесь — пример. В реальном окне обслуживания подставьте заранее выбранное ядро.
 
-## Cluster preflight
-
-Начинайте только со здорового кластера:
+## Проверка кластера до работ
 
 ```bash
 pvecm status
 ```
 
-Минимально подтвердите:
+Минимально убедитесь, что:
 
 - `Quorate: Yes`;
-- ожидаемое число nodes;
-- корректные votes/quorum;
-- отсутствие неожиданно offline nodes.
+- количество узлов ожидаемое;
+- votes/quorum корректны;
+- нет неожиданно offline nodes.
 
 Если используется HA:
 
@@ -63,7 +68,7 @@ pvecm status
 ha-manager status
 ```
 
-Если Ceph:
+Если используется Ceph:
 
 ```bash
 ceph -s
@@ -75,26 +80,24 @@ ceph -s
 pvesm status
 ```
 
-Остановите maintenance, если Ceph уже имеет неожиданные degraded/inactive PG, нужный storage недоступен или HA занят восстановлением несвязанных ресурсов.
+Остановите обслуживание, если Ceph уже находится в неожиданном degraded/inactive состоянии, нужное хранилище недоступно или HA занят восстановлением посторонних ресурсов.
 
-## Выберите canary node
+## Выберите canary-узел
 
-Не начинайте с наиболее критичного host. Выберите node, workloads которого можно чисто мигрировать и отказ которого не создаст второй incident.
+Не начинайте с самого критичного host.
 
-Зафиксируйте локальный guest set:
+Выберите узел, с которого нагрузки можно штатно мигрировать и отказ которого не создаст второй инцидент.
+
+Зафиксируйте локальные VM и CT:
 
 ```bash
 qm list
 pct list
 ```
 
-Для HA resources проверьте фактическое состояние до перемещений. Для обычных VM/CT используйте стандартную migration procedure.
+После эвакуации убедитесь, что на узле не осталось производственных нагрузок, которые нельзя прерывать, и нет активных backup, replication или migration tasks.
 
-После эвакуации убедитесь, что на node не остались production workloads, которые не должны прерываться, и что нет активных backup, replication или migration tasks.
-
-## Node preflight
-
-На выбранном node зафиксируйте состояние:
+## Проверка узла
 
 ```bash
 hostname -s
@@ -104,7 +107,7 @@ pveversion
 uname -r
 ```
 
-Проверьте наличие target kernel и boot artifacts:
+Проверьте наличие ядра и initrd:
 
 ```bash
 test -s "/boot/vmlinuz-${TARGET_KERNEL}"
@@ -118,9 +121,9 @@ findmnt /boot/efi || true
 proxmox-boot-tool status || true
 ```
 
-Node, загружающийся через GRUB, не обязательно использует `proxmox-boot-tool` для синхронизации ESP. Отсутствие `/etc/kernel/proxmox-boot-uuids` само по себе не является ошибкой обслуживания; сначала нужно понимать boot path.
+Узел, загружающийся через GRUB, не обязательно использует `proxmox-boot-tool` для управления ESP. Сначала определите реальный boot path, а уже потом выполняйте bootloader-related действия.
 
-Проверьте core services:
+Проверьте основные службы:
 
 ```bash
 systemctl is-active pve-cluster
@@ -131,31 +134,31 @@ systemctl is-active pvestatd
 systemctl --failed --no-pager
 ```
 
-Последняя команда фиксирует существующие failures, чтобы не принять старую проблему за regression после reboot.
+Последняя команда нужна, чтобы отличать старые failures от новых проблем после перезагрузки.
 
-## Сохраните rollback path
+## Сохраните путь отката
 
-Не удаляйте предыдущий рабочий kernel до завершения rollout.
+Не удаляйте предыдущее рабочее ядро до завершения rollout.
 
-Для первого теста удобно использовать one-boot pin:
+Для первого теста удобно использовать pin только на одну загрузку:
 
 ```bash
 proxmox-boot-tool kernel pin "${TARGET_KERNEL}" --next-boot
 ```
 
-`--next-boot` выбирает kernel только для следующей загрузки и не меняет долгосрочный default навсегда.
+`--next-boot` выбирает ядро только для следующей загрузки и не меняет постоянный default.
 
-На системах, где ESP управляются `proxmox-boot-tool`, после изменения pin:
+На системах, где ESP действительно управляются `proxmox-boot-tool`, после изменения pin может потребоваться:
 
 ```bash
 proxmox-boot-tool refresh
 ```
 
-Не запускайте bootloader maintenance механически на mixed boot layouts. Сначала исследуйте каждый node.
+Не запускайте bootloader maintenance механически на узлах с разной схемой загрузки.
 
-## Последний gate перед reboot
+## Последняя проверка перед reboot
 
-Непосредственно перед перезагрузкой повторите динамические проверки:
+Повторите динамические проверки непосредственно перед перезагрузкой:
 
 ```bash
 pvecm status
@@ -169,30 +172,30 @@ pvesm status
 ceph -s
 ```
 
-Также подтвердите, что node эвакуирован и нет активной administrative task.
+Также подтвердите, что узел эвакуирован и нет активных административных задач.
 
-Если cluster уже не в том же healthy state, что в начале окна, reboot откладывается.
+Если состояние кластера уже отличается от исходного healthy state, reboot откладывается.
 
-## Reboot одного node
+## Перезагрузка одного узла
 
 ```bash
 reboot
 ```
 
-По возможности наблюдайте через независимый console path: IPMI, iKVM или физическую консоль. Kernel/bootloader failure может произойти до появления сети.
+По возможности наблюдайте через независимую консоль: IPMI, iKVM или физический доступ. Ошибка ядра или bootloader может произойти до появления сети.
 
-Пока canary загружается, следующий node не трогайте.
+Пока canary-узел не прошёл полную проверку, следующий узел не трогайте.
 
 ## Проверка после загрузки
 
-Сначала проверьте реально запущенный kernel:
+Сначала убедитесь, что реально загружено требуемое ядро:
 
 ```bash
 uname -r
 [ "$(uname -r)" = "${TARGET_KERNEL}" ]
 ```
 
-Затем services:
+Затем проверьте службы:
 
 ```bash
 systemctl is-active pve-cluster
@@ -203,7 +206,7 @@ systemctl is-active pvestatd
 systemctl --failed --no-pager
 ```
 
-И cluster membership/quorum:
+И кворум:
 
 ```bash
 pvecm status
@@ -211,99 +214,97 @@ pvecm status
 
 Повторите HA/storage/Ceph checks теми же командами, что и до reboot.
 
-Только после infrastructure validation можно возвращать workloads.
+Только после инфраструктурной проверки возвращайте нагрузки.
 
-## Проверяйте реальные workloads
+## Проверяйте реальные workload
 
-Node, который снова виден в GUI, ещё не доказывает успешность maintenance.
+Появление узла в GUI ещё не доказывает, что обслуживание прошло успешно.
 
-Проверьте представительные workloads:
+Проверьте представительные нагрузки:
 
-- хотя бы одну VM с обычным network/storage I/O;
-- latency-sensitive или Windows workload, если ранее были kernel regressions;
-- storage-backed workload при важном Ceph/NFS path;
-- HA-managed resource, если HA включён.
+- обычную VM с network/storage I/O;
+- Windows или latency-sensitive workload, если ранее были regression;
+- workload на важном Ceph/NFS path;
+- HA-managed resource, если HA используется.
 
 ```bash
 qm status <vmid>
 pct status <ctid>
 ```
 
-При возможности используйте application-level checks. `running` не доказывает, что сервис внутри VM реально исправен.
+По возможности добавьте проверку самого приложения. `running` не означает, что сервис внутри VM действительно исправен.
 
-## Продолжайте node-by-node
+## Продолжайте по одному узлу
 
-После периода наблюдения за canary повторяйте одинаковую последовательность:
+Для каждого следующего узла повторяйте один и тот же цикл:
 
-1. cluster health;
-2. evacuation;
-3. target boot artifacts и rollback kernel;
-4. one-boot pin;
-5. reboot только одного node;
-6. kernel/services/quorum/storage/workload validation;
-7. переход дальше только после полного восстановления.
+1. проверить cluster health;
+2. эвакуировать workload;
+3. проверить target kernel и rollback kernel;
+4. задать one-boot pin;
+5. перезагрузить только один node;
+6. проверить kernel, services, quorum, storage и workload;
+7. переходить дальше только после полного восстановления.
 
-Процедура должна быть скучной и повторяемой. Это преимущество, а не недостаток.
+## Откат: ядро загрузилось, но работает нестабильно
 
-## Rollback: kernel загрузился, но нестабилен
-
-Снова эвакуируйте workloads и выберите previous known-good kernel:
+Снова эвакуируйте workload и выберите предыдущее рабочее ядро:
 
 ```bash
 PREVIOUS_KERNEL="<known-good-kernel>"
 proxmox-boot-tool kernel pin "${PREVIOUS_KERNEL}" --next-boot
 ```
 
-Выполните `refresh`, только если node использует managed ESP, затем reboot и полный post-boot validation.
+Если узел использует managed ESP, выполните необходимый `refresh`, затем reboot и полный post-boot validation.
 
-Проблемный kernel не раскатывается дальше, пока canary исследуется.
+Проблемное ядро не раскатывайте дальше до завершения анализа canary.
 
-## Rollback: kernel не загрузился
+## Откат: ядро не загрузилось
 
-Если node не дошёл до userspace/network, SSH уже не recovery path.
+Если узел не дошёл до userspace или сети, SSH уже не поможет.
 
-Через консоль выберите предыдущий kernel в **GRUB → Advanced options for Proxmox VE**. Именно поэтому предыдущий kernel нельзя преждевременно удалять.
+Через консоль выберите предыдущее ядро в:
 
-После восстановления соберите evidence предыдущей загрузки:
+**GRUB → Advanced options for Proxmox VE**
+
+После восстановления соберите данные предыдущей загрузки:
 
 ```bash
 journalctl -b -1 -k
 journalctl -b -1 -p warning..alert
 ```
 
-Ищите driver, storage, filesystem, network или hardware initialization failures.
+Ищите ошибки driver, storage, filesystem, network и hardware initialization.
 
-## Stop conditions
+## Условия остановки
 
-Останавливайте rollout при любом из условий:
+Останавливайте rollout, если:
 
 - quorum потерян или нестабилен;
 - Corosync membership непоследователен;
-- required storage недоступен;
-- Ceph получил неожиданный degraded/inactive state;
-- HA начал восстанавливать несвязанные ресурсы;
-- node загрузился не на том kernel;
-- core Proxmox services failed;
-- представительные workloads показывают новые ошибки;
-- rollback kernel или console path больше недоступны.
+- обязательный storage недоступен;
+- Ceph перешёл в неожиданное degraded/inactive состояние;
+- HA начал восстанавливать посторонние ресурсы;
+- узел загрузился не на том ядре;
+- основные службы Proxmox не поднялись;
+- представительные workload показывают новые ошибки;
+- путь отката или консоль больше недоступны.
 
-Runbook должен определять не только как продолжать, но и когда остановиться.
+## Почему полезен one-boot pin
 
-## Почему useful one-boot pin
+Permanent pin иногда нужен, но для первого cluster-wide теста он менее безопасен.
 
-Permanent pin иногда нужен, но плох как default для первого cluster-wide test.
+One-boot pin позволяет провести контролируемый эксперимент:
 
-One-boot pin даёт контролируемый эксперимент:
-
-- target kernel указан явно;
-- normal default не меняется навсегда;
-- previous kernel остаётся в GRUB;
-- canary оценивается до изменения следующего node.
+- целевое ядро указано явно;
+- постоянный default не меняется;
+- предыдущее ядро остаётся доступно через GRUB;
+- canary можно оценить до перехода к следующему узлу.
 
 ## Эксплуатационные заметки
 
-Используйте одинаковые preflight/post-boot команды. Сравнение одних и тех же сигналов до и после reboot упрощает поиск regression.
+Используйте одинаковые проверки до и после reboot. Сравнение одних и тех же сигналов упрощает поиск regression.
 
-Фиксируйте фактически running kernel на каждом node. Установленный package не означает, что rollout завершён.
+Фиксируйте фактически загруженное ядро на каждом узле. Установленный package не означает, что rollout завершён.
 
-Для большого cluster полезен простой checklist со статусами `pending`, `evacuated`, `rebooted`, `validated`, `complete`. Здесь дисциплина процесса важнее сложной автоматизации.
+Для большого кластера полезен простой checklist со статусами `pending`, `evacuated`, `rebooted`, `validated`, `complete`. Здесь дисциплина процесса важнее сложной автоматизации.
