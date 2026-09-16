@@ -4,32 +4,42 @@ import '../styles/global.css';
 interface Props {
   title: string;
   description: string;
+  lang?: 'en' | 'ru';
+  alternateHref?: string;
 }
 
-const { title, description } = Astro.props;
+const { title, description, lang = 'en', alternateHref } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site);
+const isRu = lang === 'ru';
+const homeHref = isRu ? '/ru/' : '/';
+const notesHref = isRu ? '/ru/notes/' : '/notes/';
+const topicsHref = isRu ? '/ru/topics/' : '/topics/';
+const rssHref = isRu ? '/ru/rss.xml' : '/rss.xml';
+const languageHref = alternateHref ?? (isRu ? '/' : '/ru/');
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang={lang}>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
     <meta name="description" content={description} />
     <meta name="author" content="Tudor Shandrov" />
     <link rel="canonical" href={canonical} />
-    <link rel="alternate" type="application/rss+xml" title="Tudor Shandrov · Technical Notes" href="/rss.xml" />
+    <link rel="alternate" hreflang={isRu ? 'en' : 'ru'} href={new URL(languageHref, Astro.site)} />
+    <link rel="alternate" type="application/rss+xml" title={isRu ? 'Tudor Shandrov · Технические заметки' : 'Tudor Shandrov · Technical Notes'} href={rssHref} />
     <title>{title}</title>
   </head>
   <body>
     <header class="site-header">
       <div class="shell nav">
-        <a class="brand" href="/">Tudor Shandrov <span>/ Technical Notes</span></a>
-        <nav aria-label="Primary navigation">
-          <a href="/notes/">Notes</a>
-          <a href="/topics/">Topics</a>
-          <a href="https://shandrov.ru">Portfolio ↗</a>
+        <a class="brand" href={homeHref}>Tudor Shandrov <span>{isRu ? '/ Технические заметки' : '/ Technical Notes'}</span></a>
+        <nav aria-label={isRu ? 'Основная навигация' : 'Primary navigation'}>
+          <a href={notesHref}>{isRu ? 'Заметки' : 'Notes'}</a>
+          <a href={topicsHref}>{isRu ? 'Темы' : 'Topics'}</a>
+          <a href="https://shandrov.ru">{isRu ? 'Портфолио ↗' : 'Portfolio ↗'}</a>
           <a href="https://github.com/greksw">GitHub ↗</a>
+          <a href={languageHref} aria-label={isRu ? 'Switch to English' : 'Переключить на русский'}>{isRu ? 'EN' : 'RU'}</a>
         </nav>
       </div>
     </header>
@@ -37,7 +47,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     <footer class="site-footer">
       <div class="shell footer-grid">
         <span>© {new Date().getFullYear()} Tudor Shandrov</span>
-        <span>Infrastructure engineering notes · notes.shandrov.ru</span>
+        <span>{isRu ? 'Заметки по инфраструктурной инженерии · notes.shandrov.ru' : 'Infrastructure engineering notes · notes.shandrov.ru'}</span>
       </div>
     </footer>
   </body>

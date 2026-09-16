@@ -3,15 +3,21 @@ import { getCollection, render } from 'astro:content';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 
 export async function getStaticPaths() {
-  const notes = await getCollection('notes');
-  return notes.map((note) => ({ params: { id: note.id }, props: { note } }));
+  const notes = await getCollection('notes', ({ data }) => data.lang === 'en');
+  const translations = await getCollection('notes', ({ data }) => data.lang === 'ru');
+  return notes.map((note) => {
+    const key = note.data.translationKey ?? note.id;
+    const translation = translations.find((item) => item.data.translationKey === key);
+    const alternateHref = translation ? `/ru/notes/${translation.id.replace(/^ru\//, '')}/` : '/ru/';
+    return { params: { id: note.id }, props: { note, alternateHref } };
+  });
 }
 
-const { note } = Astro.props;
+const { note, alternateHref } = Astro.props;
 const { Content } = await render(note);
 ---
 
-<BaseLayout title={`${note.data.title} · Tudor Shandrov`} description={note.data.description}>
+<BaseLayout title={`${note.data.title} · Tudor Shandrov`} description={note.data.description} lang="en" alternateHref={alternateHref}>
   <article class="article">
     <a href="/notes/">← All notes</a>
     <div class="eyebrow" style="margin-top:32px">{note.data.category}</div>

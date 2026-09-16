@@ -13,6 +13,8 @@ const notes = defineCollection({
     status: z.enum(['current', 'legacy', 'lab']).default('current'),
     testedOn: z.array(z.string()).default([]),
     featured: z.boolean().default(false),
+    lang: z.enum(['en', 'ru']).default('en'),
+    translationKey: z.string().optional(),
   }),
 });
 
