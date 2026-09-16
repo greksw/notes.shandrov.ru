@@ -1,393 +1,342 @@
 ---
-title: "Ansible control node and safe Linux patching: inventory, staged updates and reboots"
-description: "A lab-oriented baseline for building an Ansible control node and updating Debian- and RHEL-family servers with inventory groups, privilege escalation, canary rollout and controlled reboots."
+title: "Ansible control node for production Linux patching"
+description: "A production-backed Ansible setup for mass-updating AlmaLinux servers, with role-based inventory, raw DNF workflow, kernel-change detection and a safer roadmap for staged maintenance."
 category: "Automation & Configuration"
 tags: ["ansible", "linux", "patching", "automation", "ssh", "operations"]
 published: 2026-09-16
 updated: 2026-09-16
-status: lab
-testedOn: []
-featured: false
+status: current
+testedOn: ["AlmaLinux 10.2 control node", "Ansible Core 2.16.16", "AlmaLinux managed hosts"]
+featured: true
 translationKey: "automation/ansible-control-node-linux-patching"
 ---
 
 ## Context
 
-Ansible is agentless: the control node runs Ansible and connects to managed Linux hosts over SSH. Managed nodes normally need Python and a usable SSH account, but they do not need an Ansible daemon.
+This environment already uses a dedicated Ansible control node in production for mass Linux package updates.
 
-For server patching, the difficult part is not writing `apt upgrade` or `dnf update`. The operational problem is controlling scope, privilege, ordering, reboots and failure handling so that one bad update does not become a fleet-wide outage.
+The control node runs AlmaLinux 10.2 with Ansible Core 2.16.16. The inventory separates ordinary AlmaLinux servers from Proxmox VE nodes, Proxmox Backup Server and role-specific groups such as monitoring, backup, mail, Asterisk and Wazuh.
 
-This note is intentionally marked **lab** until the exact production inventory, authentication model and maintenance workflow have been validated on real hosts.
+The current production update workflow intentionally targets the AlmaLinux server group only. Hypervisors and backup infrastructure are present in inventory but are not included in the same generic update play.
 
-## Target design
+That separation is more important than making the first playbook sophisticated: broad automation is useful only when the target scope remains explicit.
 
-A small deployment can use one dedicated Linux control node:
+## Current production layout
 
-```text
-Ansible control node
-  -> SSH
-  -> Debian/Ubuntu servers
-  -> RHEL/Alma/Rocky servers
-```
-
-Keep playbooks, inventory structure and non-secret configuration in Git. Keep private keys, become passwords and vault passwords outside the repository.
-
-A reasonable project layout is:
+The actual inventory is more role-oriented than a minimal tutorial inventory. A sanitized representation looks like this:
 
 ```text
-ansible/
-├── ansible.cfg
-├── inventory/
-│   └── hosts.yml
-├── group_vars/
-│   └── all.yml
-└── playbooks/
-    ├── preflight.yml
-    ├── patch-linux.yml
-    └── reboot-linux.yml
+@all
+├── @almalinux_servers
+├── @proxmox_ve_nodes
+├── @proxmox_pbs_nodes
+├── @asterisk_servers
+├── @monitoring_servers
+├── @backup_servers
+├── @mail
+├── @mail2
+├── @mail3
+├── @mail4
+└── @wazuh
 ```
 
-## Install Ansible on the control node
+The role groups overlap with the broader operating-system group where appropriate. This makes it possible to target either an OS family or one application role without duplicating host definitions conceptually.
 
-The current Ansible documentation supports both the full `ansible` package and the smaller `ansible-core` package. For a minimal control node, `ansible-core` is enough for the built-in modules used here.
-
-One clean installation method is `pipx`:
+Inspect the effective inventory before maintenance:
 
 ```bash
-pipx install ansible-core
+ansible-inventory --graph
 ```
 
-Verify:
+For production work, this is a useful guardrail: verify the intended target set before running a destructive or reboot-capable playbook.
+
+## Control node
+
+Current production baseline:
+
+```text
+OS: AlmaLinux 10.2
+Ansible: ansible-core 2.16.16
+Config: /etc/ansible/ansible.cfg
+```
+
+Useful checks:
 
 ```bash
 ansible --version
-ansible-playbook --version
+ansible-inventory --graph
 ```
 
-Pin or document the version used by the environment instead of silently changing the automation runtime during unrelated maintenance.
+The exact installation method is less important than documenting the runtime version and configuration path used by the automation environment.
 
-## SSH access model
+## Current production update playbook
 
-Use a dedicated automation account or another explicitly approved administrative account. Avoid root SSH login as the default design.
+The current playbook uses `raw` commands so the update path does not depend on Python modules on the managed host.
 
-The account needs:
-
-- SSH access from the control node;
-- a trusted SSH key;
-- Python on the managed node;
-- privilege escalation for tasks that require root.
-
-Ansible supports `become` for privilege escalation. Whether sudo is passwordless, password-based or backed by another mechanism is an environment policy decision.
-
-If a become password is needed, do not store it in plaintext inventory. Use Ansible Vault, an approved secret store or an interactive prompt.
-
-## Inventory
-
-Example YAML inventory:
-
-```yaml
-all:
-  children:
-    linux:
-      children:
-        debian:
-          hosts:
-            deb01.example.net:
-            deb02.example.net:
-        rhel:
-          hosts:
-            rhel01.example.net:
-            rhel02.example.net:
-
-    canary:
-      hosts:
-        deb01.example.net:
-        rhel01.example.net:
-```
-
-Common connection variables can live in `group_vars/all.yml`:
-
-```yaml
-ansible_user: ansible
-```
-
-Do not commit private keys. Prefer normal SSH configuration or an agent rather than embedding private-key paths and secrets into every inventory entry.
-
-Validate the inventory:
-
-```bash
-ansible-inventory -i inventory/hosts.yml --graph
-```
-
-## Basic ansible.cfg
-
-A small project-local configuration can be explicit without weakening SSH trust:
-
-```ini
-[defaults]
-inventory = ./inventory/hosts.yml
-host_key_checking = True
-retry_files_enabled = False
-timeout = 20
-forks = 10
-interpreter_python = auto_silent
-```
-
-Do not disable host-key checking just to make first contact easier. Populate `known_hosts` through a controlled process.
-
-## First connectivity check
-
-Before package changes:
-
-```bash
-ansible linux -m ansible.builtin.ping
-```
-
-Then collect a small amount of host information:
-
-```bash
-ansible linux -m ansible.builtin.setup \
-  -a 'filter=ansible_distribution*'
-```
-
-A failed connection must be understood before patching begins. Do not hide unreachable hosts with `ignore_unreachable` during the initial rollout.
-
-## Preflight playbook
-
-`playbooks/preflight.yml`:
+Sanitized version:
 
 ```yaml
 ---
-- name: Preflight Linux hosts
-  hosts: linux
-  gather_facts: true
+- name: Update AlmaLinux servers
+  hosts: almalinux_servers
+  become: true
 
   tasks:
-    - name: Require a supported OS family
-      ansible.builtin.assert:
-        that:
-          - ansible_facts.os_family in ['Debian', 'RedHat']
-        fail_msg: >-
-          Unsupported OS family: {{ ansible_facts.os_family }}
+    - name: Update all packages
+      ansible.builtin.raw: dnf update -y
+      register: update_result
+      changed_when: "'Nothing to do' not in update_result.stdout"
 
-    - name: Confirm current kernel
-      ansible.builtin.command: uname -r
-      register: kernel
+    - name: Remove old dependencies
+      ansible.builtin.raw: dnf autoremove -y
+      when: update_result.changed
+
+    - name: Clean DNF cache
+      ansible.builtin.raw: dnf clean all
+      when: update_result.changed
+
+    - name: Check whether a newer kernel was installed
+      ansible.builtin.raw: |
+        CURRENT_KERNEL=$(uname -r)
+        LATEST_KERNEL=$(rpm -q kernel --last | head -1 | awk '{print $1}' | sed 's/kernel-//')
+        if [ "$CURRENT_KERNEL" != "$LATEST_KERNEL" ]; then
+          echo "kernel_updated"
+        else
+          echo "kernel_not_updated"
+        fi
+      register: kernel_check
       changed_when: false
 
-    - name: Show current kernel
-      ansible.builtin.debug:
-        var: kernel.stdout
-```
-
-Run it first against the canary group:
-
-```bash
-ansible-playbook playbooks/preflight.yml --limit canary
-```
-
-## Patch playbook
-
-A conservative first version updates only one host at a time.
-
-`playbooks/patch-linux.yml`:
-
-```yaml
----
-- name: Patch Linux servers
-  hosts: linux
-  become: true
-  gather_facts: true
-  serial: 1
-  any_errors_fatal: true
-
-  tasks:
-    - name: Update Debian package metadata and upgrade packages
-      ansible.builtin.apt:
-        update_cache: true
-        cache_valid_time: 3600
-        upgrade: dist
-      when: ansible_facts.os_family == 'Debian'
-
-    - name: Upgrade installed packages on RHEL-family hosts
-      ansible.builtin.dnf:
-        name: '*'
-        state: latest
-        update_only: true
-        update_cache: true
-      when: ansible_facts.os_family == 'RedHat'
-
-    - name: Check whether Debian requests a reboot
-      ansible.builtin.stat:
-        path: /var/run/reboot-required
-      register: debian_reboot_required
-      when: ansible_facts.os_family == 'Debian'
-
-    - name: Report Debian reboot requirement
-      ansible.builtin.debug:
-        msg: "Reboot required on {{ inventory_hostname }}"
+    - name: Schedule reboot after kernel update
+      ansible.builtin.raw: shutdown -r +1 "Reboot after kernel update"
       when:
-        - ansible_facts.os_family == 'Debian'
-        - debian_reboot_required.stat.exists | default(false)
+        - update_result.changed
+        - "'kernel_updated' in kernel_check.stdout"
+
+    - name: Final status
+      ansible.builtin.debug:
+        msg: |
+          {{ inventory_hostname }} - UPDATE COMPLETE
+          {% if update_result.changed %}
+          System updated
+          {% if 'kernel_updated' in kernel_check.stdout %}
+          Reboot scheduled
+          {% endif %}
+          {% else %}
+          No updates required
+          {% endif %}
 ```
 
-`serial: 1` deliberately trades speed for blast-radius control. Once the process is proven, the batch size can be increased deliberately.
+This is a real production baseline, but it is intentionally simple.
 
-The RHEL-family play above does not guess whether a reboot is required. Reboot detection differs by installed tooling and local policy; handle that explicitly rather than pretending one heuristic is universally correct.
+## Why `raw` can be useful
 
-## Validate before execution
+`ansible.builtin.raw` sends the command directly over the configured connection without requiring the normal Python module subsystem on the managed host.
 
-Check syntax:
+That makes it useful for bootstrap work and for hosts where Python availability cannot yet be assumed.
+
+The trade-off is important:
+
+- no normal module-level idempotence;
+- no useful check-mode simulation for the package operation;
+- change detection must be inferred from command output;
+- stdout parsing can depend on locale and package-manager wording;
+- error handling is more shell-oriented than module-oriented.
+
+So `raw` is a valid operational choice, but it should be treated as an explicit compatibility decision rather than the end state of the automation design.
+
+## Current reboot behaviour
+
+The production play compares the running kernel with the newest installed kernel package and schedules a reboot one minute later when they differ:
 
 ```bash
-ansible-playbook playbooks/patch-linux.yml --syntax-check
+shutdown -r +1 "Reboot after kernel update"
 ```
 
-Use check mode as an additional review step:
+This has one useful property: the package update task can finish before reboot starts.
 
-```bash
-ansible-playbook playbooks/patch-linux.yml \
-  --limit canary \
-  --check \
-  --diff
+It also has a limitation: Ansible does not wait for the host to return, so the playbook's final success message does not prove that the server booted successfully or that its application became healthy again.
+
+That distinction should stay explicit:
+
+```text
+package update completed != maintenance completed
 ```
 
-Check mode is not a transactional simulator. Package-manager dependency resolution and external repository state can still differ during the real run.
+## Inventory isolation is already doing useful risk control
 
-## Canary first
+The current inventory contains separate groups for Proxmox VE and PBS. The mass-update play targets `almalinux_servers`, not the whole inventory.
 
-Run the actual update only on representative hosts first:
+That is the correct direction. Hypervisor and backup nodes should have workload-specific maintenance procedures because reboot order, quorum, VM placement and storage state matter there.
 
-```bash
-ansible-playbook playbooks/patch-linux.yml --limit canary
+The same principle applies to mail, databases, directory services and other clustered or stateful workloads: they can still be managed by Ansible, but not necessarily with one generic update play.
+
+## What should be improved next
+
+The current workflow works, but several changes would make it safer and more observable without discarding the existing implementation.
+
+### 1. Add an explicit canary group
+
+Instead of immediately targeting every ordinary Linux server, first update one or two representative hosts:
+
+```text
+canary -> validate -> wider group
 ```
 
-After the canary completes, validate the applications hosted there. Package success is not equivalent to service health.
+This reduces blast radius when a repository or package introduces a problem.
 
-Only then expand the scope:
+### 2. Add rolling batches
 
-```bash
-ansible-playbook playbooks/patch-linux.yml
-```
+The current play does not specify `serial`, so Ansible may operate on several hosts in parallel according to its normal strategy and fork count.
 
-## Keep reboots separate
-
-For initial adoption, a separate reboot playbook is easier to review than automatically rebooting every patched host.
-
-`playbooks/reboot-linux.yml`:
-
-```yaml
----
-- name: Reboot explicitly selected Linux servers
-  hosts: linux
-  become: true
-  gather_facts: false
-  serial: 1
-  any_errors_fatal: true
-
-  tasks:
-    - name: Reboot and wait for the host to return
-      ansible.builtin.reboot:
-        reboot_timeout: 900
-```
-
-Never run that playbook blindly against the whole inventory. Use an explicit limit:
-
-```bash
-ansible-playbook playbooks/reboot-linux.yml \
-  --limit deb01.example.net
-```
-
-The `ansible.builtin.reboot` module waits for the machine to reboot and become responsive again, but it does not prove the application stack is healthy afterwards.
-
-## Rolling updates
-
-Ansible normally targets hosts in parallel. The `serial` keyword limits how many hosts complete the play at a time and is the basic mechanism for rolling maintenance.
-
-Examples:
+For infrastructure servers, start conservatively:
 
 ```yaml
 serial: 1
 ```
 
-or, after sufficient validation:
+or a small percentage once the process is proven.
+
+### 3. Separate `dnf autoremove`
+
+`dnf autoremove` changes package state beyond simply applying updates. It is better treated as a separate reviewed maintenance action rather than an automatic consequence of every package update.
+
+For critical hosts, inspect what will be removed before making it part of a generic unattended path.
+
+### 4. Prefer the DNF module once Python is guaranteed
+
+When Python is consistently available on managed AlmaLinux hosts, the package task can move from shell parsing to the Ansible DNF module:
 
 ```yaml
-serial: 2
+- name: Upgrade installed packages
+  ansible.builtin.dnf:
+    name: '*'
+    state: latest
+    update_only: true
+    update_cache: true
 ```
 
-For clustered systems, batch size must follow the quorum and service architecture rather than a generic number.
+This gives Ansible structured task semantics rather than relying on the string `Nothing to do`.
 
-## Systems that should not enter the generic patch group automatically
+### 5. Make reboot a controlled Ansible task
 
-Exclude infrastructure where update ordering has its own runbook, for example:
+A mature version can use `ansible.builtin.reboot` for explicitly approved hosts:
 
-- hypervisor clusters;
-- storage clusters;
-- database clusters;
-- directory-service controllers;
-- mail platforms;
-- firewalls and routers;
-- systems with strict application-level maintenance sequences.
+```yaml
+- name: Reboot and wait for the server
+  ansible.builtin.reboot:
+    reboot_timeout: 900
+```
 
-Ansible can automate those systems too, but they need workload-specific orchestration rather than a generic `state: latest` play.
+That verifies that SSH becomes available again, although application health still needs a separate check.
 
-## Backup and rollback
+### 6. Add post-update service validation
 
-Ansible does not make operating-system package upgrades transactional.
+For every role, define what "healthy after update" means.
 
-Before patching a critical host, understand the actual recovery path:
-
-- VM/PBS backup;
-- application-native backup;
-- filesystem snapshot where appropriate;
-- package version rollback if the repository still contains the previous build;
-- documented rebuild procedure.
-
-A playbook can stop after a failure. It cannot automatically guarantee that every package transaction is reversible.
-
-## Post-update validation
-
-At minimum, record:
+Examples:
 
 ```text
-host
-OS version
-kernel before
-kernel after
-package task result
-reboot performed: yes/no
-SSH reachable after maintenance: yes/no
-application validation: pass/fail
+monitoring server -> monitoring service active + UI/API reachable
+mail server       -> containers/services healthy + SMTP checks
+Wazuh             -> manager/indexer/dashboard services healthy
+Asterisk          -> service active + SIP/AMI/health check
+backup server     -> backup service/storage available
 ```
 
-For services with monitoring, confirm that expected alerts clear and health metrics return to baseline.
+A package manager exit code is not enough for production validation.
 
-## Safe operating sequence
+## Recommended staged workflow
 
-A practical workflow is:
+A safer evolution of the current process is:
 
 ```text
 inventory review
-  -> SSH connectivity
-  -> preflight
-  -> syntax check
-  -> check mode
-  -> canary patch
+  -> connectivity check
+  -> canary update
+  -> service validation
+  -> rolling update of the wider group
+  -> reboot only where required
+  -> wait for host return
   -> application validation
-  -> wider patch rollout
-  -> explicit reboot set
-  -> post-maintenance validation
+  -> record failures and exceptions
 ```
 
-The value of Ansible is not that it can update one hundred servers at once. The value is that the same reviewed procedure can be executed repeatedly while scope and failure handling remain explicit.
+This keeps the existing production use case while reducing the chance that mass automation amplifies one bad package or one incorrect reboot decision.
+
+## Example safer AlmaLinux update play
+
+This is a target pattern, not a claim that the current production play already works this way:
+
+```yaml
+---
+- name: Rolling AlmaLinux update
+  hosts: almalinux_servers
+  become: true
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+
+  tasks:
+    - name: Upgrade installed packages
+      ansible.builtin.dnf:
+        name: '*'
+        state: latest
+        update_only: true
+        update_cache: true
+
+    - name: Record running kernel
+      ansible.builtin.command: uname -r
+      register: running_kernel
+      changed_when: false
+
+    - name: Show running kernel
+      ansible.builtin.debug:
+        var: running_kernel.stdout
+```
+
+Reboot detection and role-specific validation should then be added explicitly rather than hidden inside a generic package step.
+
+## Backup and rollback
+
+Ansible does not make package upgrades transactional.
+
+Before updating important servers, know the recovery mechanism:
+
+- VM/PBS backup;
+- application-native backup where required;
+- snapshot where appropriate;
+- package downgrade path if supported;
+- rebuild procedure for disposable or reproducible systems.
+
+A successful playbook cannot replace a recovery plan.
+
+## Operational checklist
+
+Before a mass update:
+
+```text
+[ ] inventory target reviewed
+[ ] excluded infrastructure confirmed
+[ ] current backups/recovery path known
+[ ] first host or canary selected
+[ ] maintenance window understood
+```
+
+After it:
+
+```text
+[ ] package task completed
+[ ] rebooted hosts returned
+[ ] services validated
+[ ] monitoring returned to normal
+[ ] failures documented
+```
 
 ## References
 
-- Installing Ansible: <https://docs.ansible.com/projects/ansible/latest/installation_guide/intro_installation.html>
-- Building an inventory: <https://docs.ansible.com/projects/ansible/latest/getting_started/get_started_inventory.html>
-- Privilege escalation: <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_privilege_escalation.html>
-- `ansible.builtin.apt`: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/apt_module.html>
-- `ansible.builtin.dnf`: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/dnf_module.html>
-- `ansible.builtin.reboot`: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/reboot_module.html>
+- Ansible `raw` module: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/raw_module.html>
+- Ansible `dnf` module: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/dnf_module.html>
+- Ansible `reboot` module: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/reboot_module.html>
 - Rolling execution with `serial`: <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_strategies.html>
+- Privilege escalation: <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_privilege_escalation.html>
