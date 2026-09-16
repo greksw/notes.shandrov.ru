@@ -6,7 +6,7 @@ tags: ["postgresql", "postgres-pro", "prometheus", "postgres-exporter", "grafana
 published: 2026-09-16
 updated: 2026-09-16
 status: current
-testedOn: ["AlmaLinux 9.8", "Postgres Pro 1C 17.10", "postgres_exporter", "Prometheus", "Grafana"]
+testedOn: ["AlmaLinux 9.8", "Postgres Pro 1C 17.10", "postgres_exporter systemd deployment", "Prometheus", "Grafana"]
 featured: true
 translationKey: "monitoring/postgresql-postgrespro-prometheus-monitoring"
 ---
@@ -15,21 +15,16 @@ translationKey: "monitoring/postgresql-postgrespro-prometheus-monitoring"
 
 Generic Linux monitoring can show CPU, memory, filesystem and network state, but it cannot explain most database-level incidents.
 
-For PostgreSQL/Postgres Pro, a useful observability model needs database-native metrics such as:
+The production 1C database host in this environment runs Postgres Pro 1C 17.10 on AlmaLinux 9.8 and exposes database metrics through a dedicated `postgres_exporter.service` to Prometheus and Grafana.
+
+The monitoring path is therefore split into two layers:
 
 ```text
-connections
-transaction activity
-locks
-cache/activity statistics
-database size
-background writer/checkpoint activity
-replication state where used
+Linux host metrics -> CPU / RAM / filesystem / network
+PostgreSQL metrics -> sessions / transactions / locks / checkpoints / DB state
 ```
 
-The production 1C database host in this environment runs Postgres Pro 1C 17.10 on AlmaLinux 9.8 and already exposes PostgreSQL metrics through a dedicated `postgres_exporter` systemd service.
-
-The database exporter is therefore treated as a separate signal source rather than trying to infer database health only from `postgres` process state or host metrics.
+A healthy Linux host is not proof of a healthy database.
 
 ## Production baseline
 
@@ -38,101 +33,179 @@ Verified stack:
 ```text
 OS: AlmaLinux 9.8
 Database: Postgres Pro 1C 17.10
+Database listener: loopback from exporter
 Exporter service: postgres_exporter.service
+Exporter port: 9187
 Metrics backend: Prometheus
 Visualization: Grafana
 ```
 
-The exact exporter build and current datasource configuration are intentionally not claimed here until they are captured from the running host.
+The exact `postgres_exporter` binary version is not claimed because the installed binary did not return a version string through the tested `--version` invocation.
 
-## Monitoring layers
+## Actual systemd design
 
-A useful database view combines several layers:
+The production exporter runs as a dedicated unprivileged account:
 
-```text
-Linux host metrics
-       |
-       +--> CPU / RAM / filesystem / network
-       |
-       v
-PostgreSQL exporter
-       |
-       +--> database/session/activity metrics
-       |
-       v
-Prometheus
-       |
-       v
-Grafana
+```ini
+[Service]
+Type=simple
+User=postgres_exporter
+Group=postgres_exporter
 ```
 
-The two metric sources answer different questions.
+The database connection is local to the host:
 
-Host monitoring can tell you that the server is under CPU pressure. PostgreSQL metrics can tell you whether the pressure correlates with connection growth, transaction activity or database workload.
+```ini
+Environment="DATA_SOURCE_URI=127.0.0.1:5432/postgres?sslmode=disable"
+Environment="DATA_SOURCE_USER=postgres_exporter"
+Environment="DATA_SOURCE_PASS_FILE=/etc/postgres_exporter/password"
+```
 
-## Validate the production service first
+This has several useful properties:
 
-Before changing configuration, confirm the existing exporter service:
+- PostgreSQL credentials are not embedded in `ExecStart`;
+- the password is read from a separate file;
+- the exporter connects to PostgreSQL over loopback;
+- the exporter endpoint and the PostgreSQL endpoint can be restricted independently.
+
+Do not publish the password file contents. Keep its ownership and mode restrictive.
+
+## Exporter command line
+
+The production service starts:
+
+```bash
+/usr/local/bin/postgres_exporter \
+  --config.file= \
+  --web.listen-address=<db-host-ip>:9187 \
+  --collector.database_wraparound \
+  --collector.long_running_transactions \
+  --collector.postmaster \
+  --collector.stat_checkpointer \
+  --no-collector.stat_replication
+```
+
+The internal address is intentionally omitted from the public runbook.
+
+The unit explicitly passes an empty `--config.file=` and uses environment variables for the database connection.
+
+The selected collectors reflect the current production requirements:
+
+```text
+database_wraparound
+long_running_transactions
+postmaster
+stat_checkpointer
+```
+
+Replication collection is disabled because this monitored instance does not currently use that collector path:
+
+```text
+--no-collector.stat_replication
+```
+
+Do not enable collectors just because they exist. Each enabled collector should correspond to an operational question or alerting requirement.
+
+## Listener model
+
+The exporter is not bound to `0.0.0.0`.
+
+It listens on one explicit internal address:
+
+```text
+<db-host-ip>:9187
+```
+
+The effective socket can be verified with:
+
+```bash
+ss -lntp | grep -E ':9187\b|postgres_exporter'
+```
+
+This is preferable to publishing the endpoint on every interface.
+
+Firewall policy should still restrict TCP/9187 to the Prometheus collector path only.
+
+## Service ordering
+
+The unit starts after the database service and waits for network-online:
+
+```ini
+After=network-online.target postgrespro-1c-17.service
+Wants=network-online.target
+```
+
+This gives the exporter a sensible startup order without making it part of the database service itself.
+
+After a database restart, verify exporter collection rather than assuming the dependency ordering proves the connection is healthy.
+
+## systemd hardening
+
+The production unit applies several restrictions:
+
+```ini
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+```
+
+This is a good fit for an exporter process because it should not need privileged kernel access, elevated capabilities or write access across the host filesystem.
+
+Any future change that requires broader permissions should be justified by the collector or integration that needs them rather than weakening the unit pre-emptively.
+
+## Validate the running exporter
+
+Check service state:
 
 ```bash
 systemctl status postgres_exporter --no-pager
 systemctl is-enabled postgres_exporter
 ```
 
-Inspect the unit rather than assuming paths or command-line arguments:
+Inspect the effective unit:
 
 ```bash
 systemctl cat postgres_exporter
 ```
 
-This is important because exporter deployment methods differ. The service may use:
-
-```text
-an EnvironmentFile
-a systemd drop-in
-a wrapper script
-direct command-line flags
-```
-
-Do not publish credentials from the unit or environment file.
-
-## Confirm the exporter listener
-
-Discover the actual listening socket:
+Check the listener:
 
 ```bash
-ss -lntp | grep -i postgres_exporter
+ss -lntp | grep -E ':9187\b|postgres_exporter'
 ```
 
-If process names are not visible to the current user, inspect the unit and process tree:
+Because the exporter is bound to the internal host address rather than loopback, test the metrics endpoint using that address from an allowed monitoring path:
 
 ```bash
-ps -ef | grep '[p]ostgres_exporter'
+curl -fsS http://<db-host-ip>:9187/metrics | head
 ```
 
-A common exporter port is `9187`, but operational documentation should use the actual configured port rather than assuming the default.
-
-## Test the metrics endpoint locally
-
-Once the actual listen address/port is known:
-
-```bash
-curl -fsS http://127.0.0.1:9187/metrics | head
-```
-
-Replace the port if the production unit uses another value.
-
-A successful response proves that the exporter endpoint is reachable. It does not yet prove that database queries are succeeding.
-
-Look for exporter/database collection errors as well as metrics:
+Then inspect recent exporter logs:
 
 ```bash
 journalctl -u postgres_exporter -n 100 --no-pager
 ```
 
-## Database account model
+A reachable `/metrics` endpoint proves only that the exporter HTTP server is up. Repeated database collection errors still indicate an unhealthy monitoring path.
 
-The exporter should use a dedicated database account with only the privileges required for monitoring.
+## Database monitoring account
+
+The exporter uses a dedicated database account:
+
+```text
+postgres_exporter
+```
+
+That account should have only the permissions required by the enabled collectors.
 
 Do not reuse:
 
@@ -142,33 +215,11 @@ postgres superuser credentials
 1C service credentials
 ```
 
-Keep the monitoring password outside public Git, shell scripts and documentation.
+Where possible, use PostgreSQL/Postgres Pro predefined monitoring roles plus only the additional grants required by actual custom queries.
 
-Depending on PostgreSQL/Postgres Pro version and required collectors, the monitoring account can use the built-in monitoring roles supported by the database plus any narrowly scoped grants needed by custom queries.
+## Prometheus scrape model
 
-The exact grants should be validated against the exporter build and query set actually deployed.
-
-## Keep the exporter private
-
-There is normally no reason to expose the exporter endpoint to arbitrary networks.
-
-Preferred pattern:
-
-```text
-Prometheus -> postgres_exporter
-users      -X-> postgres_exporter
-Internet   -X-> postgres_exporter
-```
-
-Restrict the listen address and/or firewall so that only the Prometheus collector path can reach it.
-
-If Prometheus runs on the same host, loopback binding is sufficient.
-
-If Prometheus is remote, allow only the monitoring source network or address.
-
-## Prometheus scrape job
-
-A minimal Prometheus target can look like:
+A sanitized scrape target can look like:
 
 ```yaml
 scrape_configs:
@@ -181,213 +232,145 @@ scrape_configs:
           role: database
 ```
 
-Use sanitized DNS names in public documentation.
-
-In a multi-site environment, add stable labels such as:
-
-```text
-site
-role
-service
-environment
-```
-
-Do not place database names, SQL text, usernames or other unbounded values into target labels.
-
-## Validate from Prometheus
-
-First validate the Prometheus configuration:
+Before applying a Prometheus change:
 
 ```bash
 promtool check config /etc/prometheus/prometheus.yml
 ```
 
-Reload or restart according to the production deployment method.
-
-Then confirm the target is `UP` in Prometheus.
-
-At query level, start with exporter health/availability metrics exposed by the installed exporter and confirm that real PostgreSQL metrics are present.
-
-Do not copy dashboard queries blindly from another exporter version: metric names can differ between releases and enabled collectors.
+Then verify that the target is `UP` and that PostgreSQL metrics are actually changing over time.
 
 ## What to monitor
 
-### Connections
+### Connections and long-running activity
 
-Useful questions:
+Track session count against the real `max_connections` value and watch for abnormal growth.
 
-```text
-How many sessions are active?
-How close is the database to its connection limit?
-Is connection count growing abnormally?
-```
+The enabled `long_running_transactions` collector is useful because long transactions can contribute to lock retention, table bloat and delayed cleanup.
 
-A connection graph is more useful when compared with configured `max_connections` and application behavior.
+### Transaction activity and locks
 
-### Transaction activity
+Monitor transaction rates and contention together with host CPU/I/O and application errors.
 
-Track transaction rates and database activity to establish a normal workload baseline.
+A slow application may be caused by the database, but it may also be caused by storage pressure, network issues or the application tier.
 
-A sudden drop can be as meaningful as a spike if the application should be busy.
+### Checkpoints
 
-### Locks and contention
+The enabled `stat_checkpointer` collector provides checkpoint-related visibility.
 
-Lock metrics help distinguish a slow application from database contention.
+Correlate checkpoint behavior with storage latency and write pressure rather than evaluating it in isolation.
 
-For incident analysis, correlate lock growth with:
+### Postmaster state
 
-```text
-application errors
-query latency where collected
-CPU / I/O pressure
-connection growth
-```
+The `postmaster` collector gives process-level database server state that is more useful than checking only whether a TCP port is open.
 
-### Database size
+### Transaction ID wraparound
 
-Database growth is useful for capacity planning but should not be confused with filesystem free space.
+The `database_wraparound` collector exists for an important PostgreSQL failure mode: transaction ID exhaustion/wraparound risk.
 
-Monitor both:
-
-```text
-logical database growth
-underlying filesystem/storage capacity
-```
-
-### Cache and activity statistics
-
-PostgreSQL exposes statistics that help show whether workload behavior changed over time.
-
-Use them primarily as trends. A single ratio without workload context is rarely a complete performance diagnosis.
-
-### Checkpoints and write activity
-
-Checkpoint/background-writer metrics can help correlate write pressure with storage latency and application slowdowns.
-
-They are most useful when host/storage metrics are visible on the same time range.
+This is exactly the type of condition that belongs in database-native monitoring rather than a generic Linux dashboard.
 
 ### Replication
 
-If replication is used, monitor it explicitly:
+Replication collection is intentionally disabled in the current service.
 
-```text
-replica availability
-lag
-WAL/replay progress
-replication slot state where applicable
-```
-
-Do not create replication alerts on systems that do not use replication.
+If replication is introduced later, enable and validate the relevant collector only after defining what lag/slot/replay state should be considered healthy.
 
 ## Grafana dashboard structure
 
-A database dashboard should answer operational questions rather than show every exported metric.
-
-A useful layout is:
+A useful database dashboard should answer operational questions instead of showing every exported metric:
 
 ```text
 Overview
-  -> exporter/DB availability
+  -> exporter / DB availability
   -> connections
-  -> transaction/activity rate
-  -> locks
-  -> database size
-  -> checkpoints/write activity
-  -> host CPU/RAM/storage
-  -> replication, if used
+  -> long-running transactions
+  -> transaction activity
+  -> locks / contention
+  -> checkpoint activity
+  -> wraparound risk
+  -> host CPU / RAM / storage
 ```
 
-Keep host-level panels close to PostgreSQL panels. This makes it easier to see whether a database event is caused by the database layer or by resource pressure underneath it.
+Keep host panels close to database panels so that DB symptoms can be correlated with the resources underneath them.
 
-## Alerting principles
+## Alerting
 
-Avoid alerts such as "metric changed".
-
-Prefer actionable conditions such as:
+Prefer actionable conditions:
 
 ```text
-exporter unreachable
+exporter unavailable
 PostgreSQL unavailable
-connection usage approaching configured limit
+connections approaching limit
+long-running transactions beyond accepted duration
 persistent lock/contention condition
-database/filesystem growth approaching capacity
-replication lag outside the accepted window
+checkpoint/write pressure outside baseline
+transaction ID wraparound risk
+filesystem/storage approaching capacity
 ```
 
-Thresholds should come from the actual application workload and maintenance model, not from a generic dashboard import.
+Thresholds must come from the actual 1C workload and maintenance model rather than from a generic imported dashboard.
 
-## 1C-specific boundary
+## 1C monitoring boundary
 
-This database is part of a 1C stack, but PostgreSQL monitoring and 1C monitoring should remain separate concerns.
+PostgreSQL monitoring does not prove that the 1C application tier is healthy.
 
-PostgreSQL metrics can show database behavior, but they do not prove that:
+It cannot by itself prove that:
 
 ```text
-1C server processes are healthy
-the expected 1C platform instance is running
+the expected 1C server instance is active
 the infobase is available to users
-1C application-level operations succeed
+1C application operations complete successfully
+cluster-level 1C state is normal
 ```
 
-The production environment already has a separate 1C metrics service/timer. Those application-specific signals belong in a dedicated 1C monitoring runbook.
+The production host already has a separate 1C metrics service/timer. Those signals belong in a dedicated 1C monitoring runbook.
 
 ## Security considerations
 
-For the exporter path:
+Keep the monitoring path constrained:
 
-- use a dedicated DB monitoring account;
-- do not expose exporter credentials in Git;
-- restrict the exporter listener;
-- avoid putting secrets in systemd command-line arguments where possible;
-- protect environment/config files with restrictive permissions;
-- do not expose exporter endpoints to the Internet;
-- keep database TCP/5432 independently restricted.
+- dedicated `postgres_exporter` OS user;
+- dedicated PostgreSQL monitoring account;
+- password in `/etc/postgres_exporter/password`, not command-line arguments;
+- PostgreSQL connection over loopback;
+- exporter bound to one internal address;
+- TCP/9187 reachable only from Prometheus;
+- TCP/5432 restricted independently;
+- systemd hardening retained unless a specific requirement justifies a change.
 
-Monitoring access should not become an alternate administrative path into the database.
+Monitoring should not create a second administrative path into the database.
 
 ## Backup and rollback
 
-Monitoring changes should not modify the production database schema unless a specific approved collector requires it.
-
-Before changing an existing exporter deployment, preserve:
+Before modifying the exporter path preserve:
 
 ```text
-systemd unit / drop-ins
-exporter environment/config files
+/etc/systemd/system/postgres_exporter.service
+/etc/postgres_exporter/password metadata/permissions
 Prometheus scrape configuration
-custom query files, if used
-Grafana dashboard JSON/provisioning
+Grafana dashboards/provisioning
 alert rules
 ```
 
-Rollback should mean restoring the previous exporter/configuration state, not touching the application database.
+Do not copy the password itself into Git or documentation.
+
+Rollback should mean restoring the previous exporter and monitoring configuration, not changing the application database.
 
 ## Validation checklist
 
 ```text
-[ ] postgres_exporter service active
-[ ] exporter endpoint reachable only from intended monitoring path
-[ ] exporter journal has no repeated DB collection errors
-[ ] Prometheus target is UP
-[ ] database metrics are present
-[ ] host and DB labels identify the target consistently
-[ ] Grafana panels show current, changing data
-[ ] alert rules can be tested safely
+[ ] postgres_exporter.service active
+[ ] exporter runs as postgres_exporter user/group
+[ ] PostgreSQL connection remains on loopback
+[ ] password is file-backed, not present in ExecStart
+[ ] exporter listens only on the intended internal address:9187
+[ ] firewall restricts 9187 to the monitoring path
+[ ] journal has no repeating collection errors
+[ ] Prometheus target = UP
+[ ] database metrics are changing
+[ ] Grafana displays current data
 ```
-
-## Information still worth capturing from production
-
-To make this runbook fully implementation-specific, capture the non-secret runtime details:
-
-```bash
-postgres_exporter --version 2>/dev/null || true
-systemctl cat postgres_exporter
-ss -lntp | grep -E ':9187\b|postgres_exporter'
-```
-
-And from Prometheus, capture the sanitized scrape job used for this host.
-
-Do not include database passwords or connection strings containing credentials.
 
 ## References
 
