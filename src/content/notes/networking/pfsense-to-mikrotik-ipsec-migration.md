@@ -325,6 +325,18 @@ Do not delete the old configuration during the cutover. Deletion turns a control
 
 ## Monitoring after migration
 
+At the time of the migration, all servers and pfSense gateways were still monitored in Zabbix over TLS PSK-protected connections. Zabbix was therefore part of the operational evidence during the cutover; the later Prometheus-based monitoring design should not be projected backwards onto the migration.
+
+The current responsibility split is narrower and deliberate:
+
+| Scope retained in Zabbix | Monitoring role |
+| --- | --- |
+| computers | Zabbix Agent with TLS PSK |
+| printers | device state and consumable levels, including cartridges |
+| Yealink IP phones | availability of the device web interface |
+
+No PSK identities or key values belong in diagrams, articles, exports, or troubleshooting logs.
+
 The observation period should cover more than a single successful ping. Watch at least:
 
 - IKE and child-SA rekeys;
@@ -334,7 +346,7 @@ The observation period should cover more than a single successful ping. Watch at
 - independent application probes across the tunnel;
 - logs for identity, proposal, replay, timeout, and fragmentation errors.
 
-The [SNMP exporter network monitoring guide](/notes/monitoring/snmp-exporter-network-monitoring/) is useful for router and interface health. Pair it with service-level probes across the protected networks. Device health and an established IKE session do not prove that every application path works.
+For the newer network-monitoring layer, the [SNMP exporter network monitoring guide](/notes/monitoring/snmp-exporter-network-monitoring/) is useful for router and interface health. Pair it with service-level probes across the protected networks. Device health and an established IKE session do not prove that every application path works.
 
 If large packets fail while small pings succeed, inspect MTU, PMTUD, MSS handling, and intermediate filtering before changing cryptographic parameters.
 
