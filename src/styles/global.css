@@ -48,6 +48,7 @@ h2 { margin: 0; font-size: clamp(1.8rem, 4vw, 3rem); letter-spacing: -.035em; }
 .article p, .article li { color: #c3ccd5; }
 .article pre { overflow-x: auto; padding: 18px; border: 1px solid var(--line); border-radius: 8px; }
 .article code:not(pre code) { padding: .15em .35em; background: var(--panel-2); border-radius: 4px; }
+.article img { display: block; width: 100%; height: auto; margin: 30px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .note-meta { margin: 24px 0 40px; padding: 18px 0; border-block: 1px solid var(--line); }
 .notice { padding: 16px 18px; border-left: 3px solid var(--accent); background: var(--panel); color: var(--muted); }
 .topic-list { display: flex; flex-wrap: wrap; gap: 10px; }

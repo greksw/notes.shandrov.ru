@@ -8,6 +8,7 @@ updated: 2026-09-16
 status: current
 testedOn: ["blackbox_exporter 0.28.0", "Prometheus", "HTTP", "TCP", "ICMP", "TLS 1.2+"]
 featured: true
+lang: ru
 translationKey: "monitoring/blackbox-exporter-http-tcp-icmp-tls-monitoring"
 ---
 

@@ -8,6 +8,7 @@ updated: 2026-09-16
 status: current
 testedOn: ["Windows Server 2022 Standard build 20348", "windows_exporter 0.31.8", "Prometheus file_sd"]
 featured: true
+lang: ru
 translationKey: "monitoring/windows-exporter-prometheus-monitoring"
 ---
 

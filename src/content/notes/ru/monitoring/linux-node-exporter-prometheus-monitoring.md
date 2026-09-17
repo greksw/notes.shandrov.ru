@@ -8,6 +8,7 @@ updated: 2026-09-16
 status: current
 testedOn: ["AlmaLinux 9.8", "node_exporter 1.12.1", "Prometheus file_sd", "Prometheus recording and alerting rules"]
 featured: true
+lang: ru
 translationKey: "monitoring/linux-node-exporter-prometheus-monitoring"
 ---
 

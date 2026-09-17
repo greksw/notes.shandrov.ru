@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" role="img" aria-labelledby="title desc">
+  <title id="title">Sanitized four-site IPsec migration topology</title>
+  <desc id="desc">The HQ hub connects to PROD, BRANCH-A, and BRANCH-B through policy-based IKEv2 IPsec tunnels.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#11151a"/>
+      <stop offset="1" stop-color="#0b0d10"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity="0.28"/>
+    </filter>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="4.5" refY="4.5" orient="auto-start-reverse">
+      <path d="M 0 0 L 9 4.5 L 0 9 z" fill="#8fbfff"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="700" rx="18" fill="url(#background)"/>
+  <text x="60" y="62" fill="#e7edf3" font-family="Inter, system-ui, sans-serif" font-size="30" font-weight="700">Sanitized reference topology</text>
+  <text x="60" y="96" fill="#96a2ae" font-family="Inter, system-ui, sans-serif" font-size="18">Hub-and-spoke · IKEv2 · policy-based IPsec · multiple traffic selectors</text>
+
+  <g stroke="#8fbfff" stroke-width="4" stroke-dasharray="12 10" fill="none" marker-start="url(#arrow)" marker-end="url(#arrow)">
+    <path d="M600 300 C480 350 300 380 225 455"/>
+    <path d="M600 300 L600 455"/>
+    <path d="M600 300 C720 350 900 380 975 455"/>
+  </g>
+
+  <g font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#8fbfff">
+    <text x="312" y="368">IKEv2 / ESP</text>
+    <text x="616" y="390">IKEv2 / ESP</text>
+    <text x="805" y="368">IKEv2 / ESP</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="390" y="140" width="420" height="160" rx="14" fill="#171c22" stroke="#8fbfff" stroke-width="2"/>
+    <rect x="55" y="455" width="340" height="170" rx="14" fill="#171c22" stroke="#27303a" stroke-width="2"/>
+    <rect x="430" y="455" width="340" height="170" rx="14" fill="#171c22" stroke="#27303a" stroke-width="2"/>
+    <rect x="805" y="455" width="340" height="170" rx="14" fill="#171c22" stroke="#27303a" stroke-width="2"/>
+  </g>
+
+  <g font-family="Inter, system-ui, sans-serif">
+    <text x="420" y="185" fill="#e7edf3" font-size="25" font-weight="700">HQ · gw-hq-01</text>
+    <text x="420" y="222" fill="#c3ccd5" font-size="18">vpn-hq.example.net · 192.0.2.10</text>
+    <text x="420" y="258" fill="#96a2ae" font-size="17">10.10.10.0/24 · 10.10.20.0/24</text>
+
+    <text x="82" y="493" fill="#e7edf3" font-size="23" font-weight="700">PROD</text>
+    <text x="82" y="520" fill="#96a2ae" font-size="16">gw-prod-01</text>
+    <text x="82" y="550" fill="#c3ccd5" font-size="17">vpn-prod.example.net</text>
+    <text x="82" y="578" fill="#c3ccd5" font-size="17">198.51.100.20</text>
+    <text x="82" y="608" fill="#96a2ae" font-size="16">10.20.10.0/24 · 10.20.20.0/24</text>
+
+    <text x="457" y="493" fill="#e7edf3" font-size="23" font-weight="700">BRANCH-A</text>
+    <text x="457" y="520" fill="#96a2ae" font-size="16">gw-branch-a-01</text>
+    <text x="457" y="550" fill="#c3ccd5" font-size="17">vpn-branch-a.example.net</text>
+    <text x="457" y="578" fill="#c3ccd5" font-size="17">203.0.113.30</text>
+    <text x="457" y="608" fill="#96a2ae" font-size="16">10.30.10.0/24 · 10.30.20.0/24</text>
+
+    <text x="832" y="493" fill="#e7edf3" font-size="23" font-weight="700">BRANCH-B</text>
+    <text x="832" y="520" fill="#96a2ae" font-size="16">gw-branch-b-01</text>
+    <text x="832" y="550" fill="#c3ccd5" font-size="17">vpn-branch-b.example.net</text>
+    <text x="832" y="578" fill="#c3ccd5" font-size="17">203.0.113.40</text>
+    <text x="832" y="608" fill="#96a2ae" font-size="16">10.40.10.0/24 · 10.40.20.0/24</text>
+  </g>
+
+  <line x1="60" y1="660" x2="1140" y2="660" stroke="#27303a"/>
+  <text x="60" y="685" fill="#74808c" font-family="Inter, system-ui, sans-serif" font-size="14">All names, domains, and addresses are documentation-only examples (RFC 5737 / example.net).</text>
+</svg>

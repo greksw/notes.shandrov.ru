@@ -8,6 +8,7 @@ updated: 2026-09-16
 status: current
 testedOn: ["snmp_exporter 0.30.1", "Prometheus file_sd"]
 featured: true
+lang: ru
 translationKey: "monitoring/snmp-exporter-network-monitoring"
 ---
 
