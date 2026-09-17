@@ -48,7 +48,7 @@ The reference names used throughout the article are:
 
 Old VPN estates are often documented in fragments: a firewall export, a spreadsheet of subnets, DNS records, and operator notes may all disagree. Treating any one artifact as complete is a migration risk.
 
-Before designing the RouterOS side, we built one selector inventory from several sources:
+Before designing the RouterOS side, we built a single selector inventory from several sources:
 
 | Field | Why it matters |
 | --- | --- |
@@ -100,14 +100,14 @@ This limited the failure domain to one relationship and kept the rollback path u
 
 Take both a RouterOS backup and a text export. Store them outside the router and protect them as sensitive infrastructure data.
 
-```routeros
+```text
 /system backup save name=pre-ipsec-migration
 /export show-sensitive=no file=pre-ipsec-migration
 ```
 
 Capture the live state separately:
 
-```routeros
+```text
 /ip ipsec peer print detail
 /ip ipsec identity print detail
 /ip ipsec policy print detail
@@ -128,7 +128,7 @@ The migration used explicit names and comments so that all objects belonging to 
 
 The example below shows only the structural shape of an `HQ` to `BRANCH-A` relationship:
 
-```routeros
+```text
 /ip ipsec peer
 add name=peer-branch-a address=vpn-branch-a.example.net \
     exchange-mode=ike2 profile=s2s-profile-v1 disabled=yes \
@@ -151,7 +151,7 @@ Do not copy cryptographic settings from this or another article. Build `s2s-prof
 
 RouterOS accepts a DNS name as the peer address, which avoids embedding a provider address in every peer definition:
 
-```routeros
+```text
 :put [:resolve domain-name="vpn-branch-a.example.net"]
 /ip ipsec peer print detail where name="peer-branch-a"
 ```
@@ -160,7 +160,7 @@ Using FQDN does not remove the DNS dependency; it makes it explicit. Before cuto
 
 - the router can resolve the name using its configured DNS path;
 - the answer matches the approved endpoint;
-- UDP 500 and UDP 4500 can reach that endpoint;
+- UDP 500 and UDP 4500 are reachable, and native ESP (IP protocol 50) is permitted when NAT-T is not used;
 - monitoring and the rollback sheet use the same canonical name;
 - a controlled DNS change and IKE re-establishment have been tested in a maintenance window.
 
@@ -172,7 +172,7 @@ Site-to-site traffic must not be caught by a generic Internet masquerade rule. A
 
 Example on `HQ`:
 
-```routeros
+```text
 /ip firewall nat
 add chain=srcnat action=accept \
     src-address=10.10.10.0/24 dst-address=10.30.10.0/24 \
@@ -181,7 +181,7 @@ add chain=srcnat action=accept \
 
 First inspect the real rule order:
 
-```routeros
+```text
 /ip firewall nat print detail stats
 ```
 
@@ -195,7 +195,7 @@ FastTrack can bypass processing needed for IPsec policy checks. The safe design 
 
 Example rule shape:
 
-```routeros
+```text
 /ip firewall filter
 add chain=forward action=accept ipsec-policy=in,ipsec \
     src-address=10.30.10.0/24 dst-address=10.10.10.0/24 \
@@ -208,7 +208,7 @@ add chain=forward action=accept ipsec-policy=out,ipsec \
 
 Inspect the existing filter and FastTrack placement before changing anything:
 
-```routeros
+```text
 /ip firewall filter print detail stats
 /ip firewall filter print detail stats where action=fasttrack-connection
 ```
@@ -237,7 +237,7 @@ Use three layers of evidence.
 
 ### 1. Control plane
 
-```routeros
+```text
 /ip ipsec active-peers print detail
 /ip ipsec installed-sa print detail
 /ip ipsec policy print detail where comment~"BRANCH-A"
@@ -256,13 +256,13 @@ Confirm that:
 
 Test each selector pair in both directions from representative hosts. A router-originated ping can provide an additional check when its source address is part of the policy:
 
-```routeros
+```text
 /ping 10.30.10.10 src-address=10.10.10.1 count=5
 ```
 
 Also inspect NAT and filter counters:
 
-```routeros
+```text
 /ip firewall nat print stats where comment~"BRANCH-A"
 /ip firewall filter print stats where comment~"BRANCH-A"
 ```
@@ -325,7 +325,7 @@ Do not delete the old configuration during the cutover. Deletion turns a control
 
 ## Monitoring after migration
 
-At the time of the migration, all servers and pfSense gateways were still monitored in Zabbix over TLS PSK-protected connections. Zabbix was therefore part of the operational evidence during the cutover; the later Prometheus-based monitoring design should not be projected backwards onto the migration.
+At the time of the migration, all servers and pfSense gateways were still monitored in Zabbix over TLS PSK-protected connections. Zabbix was therefore part of the operational evidence during the cutover; the later Prometheus-based design should not be retroactively presented as the monitoring stack used during the migration.
 
 The current responsibility split is narrower and deliberate:
 
