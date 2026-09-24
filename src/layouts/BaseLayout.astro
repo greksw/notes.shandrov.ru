@@ -52,6 +52,7 @@ const languageHref = alternateHref ?? (isRu ? '/' : '/ru/');
       <div class="shell footer-grid">
         <span>© {new Date().getFullYear()} Tudor Shandrov</span>
         <span>{isRu ? 'Заметки по инфраструктурной инженерии · notes.shandrov.ru' : 'Infrastructure engineering notes · notes.shandrov.ru'}</span>
+        <a href={isRu ? '/ru/privacy/' : '/privacy/'}>{isRu ? 'Конфиденциальность' : 'Privacy'}</a>
       </div>
     </footer>
   </body>
