@@ -1,0 +1,37 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Конфиденциальность · Технические заметки"
+  description="Как обрабатываются технические данные посетителей notes.shandrov.ru."
+  lang="ru"
+  alternateHref="/privacy/"
+>
+  <section class="hero">
+    <div class="shell">
+      <div class="eyebrow">Конфиденциальность</div>
+      <h1>Данные посетителей</h1>
+      <p class="lead">Технические заметки — статический сайт без аналитических счётчиков.</p>
+    </div>
+  </section>
+  <section class="shell privacy-content">
+    <h2>Cookie и аналитика</h2>
+    <p>Сайт не устанавливает файлы cookie. Яндекс Метрика, Google Analytics и рекламные пиксели не подключены. Для добавления сайта в поисковые системы счётчик в браузере посетителя не требуется.</p>
+
+    <h2>Серверные журналы</h2>
+    <p>При запросе страницы сервер может записывать IP-адрес, время запроса, URL, код ответа и User-Agent. Эти сведения используются для доставки страниц, диагностики ошибок и защиты сайта, без рекламного профилирования.</p>
+
+    <h2>Формы и внешние ссылки</h2>
+    <p>На сайте нет учётных записей, подписки и форм отправки данных. При переходе по ссылке на внешний ресурс действуют правила этого ресурса.</p>
+
+    <p class="privacy-updated">Обновлено: 24 сентября 2026 года</p>
+  </section>
+</BaseLayout>
+
+<style>
+  .privacy-content { max-width: 800px; padding-block: 32px 80px; }
+  .privacy-content h2 { margin: 32px 0 12px; font-size: 1.5rem; }
+  .privacy-content p { color: var(--muted); line-height: 1.7; }
+  .privacy-updated { margin-top: 48px; }
+</style>
