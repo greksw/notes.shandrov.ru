@@ -1,7 +1,7 @@
 ---
 title: "Mailcow: безопасная массовая очистка Trash через doveadm"
 description: "Практический Bash-скрипт для предварительного подсчёта и массового удаления писем старше заданного срока из Trash во всех ящиках Mailcow с контрольной проверкой после expunge."
-category: "Приложения и сервисы"
+category: "Почта и сервисы"
 tags: ["mailcow", "dovecot", "doveadm", "email", "bash", "operations"]
 published: 2026-09-24
 updated: 2026-09-24
