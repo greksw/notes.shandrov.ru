@@ -1,0 +1,37 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Privacy · Technical Notes"
+  description="How visitor technical data is handled on notes.shandrov.ru."
+  lang="en"
+  alternateHref="/ru/privacy/"
+>
+  <section class="hero">
+    <div class="shell">
+      <div class="eyebrow">Privacy</div>
+      <h1>Visitor data</h1>
+      <p class="lead">Technical Notes is a static website without analytics scripts.</p>
+    </div>
+  </section>
+  <section class="shell privacy-content">
+    <h2>Cookies and analytics</h2>
+    <p>The site does not set cookies. Yandex Metrica, Google Analytics and advertising pixels are not enabled. Search engine registration does not require a tracking script in visitors' browsers.</p>
+
+    <h2>Server logs</h2>
+    <p>When a page is requested, the server may record the IP address, request time, URL, response status and User-Agent. This information is used to deliver pages, diagnose errors and protect the site, without advertising profiling.</p>
+
+    <h2>Forms and external links</h2>
+    <p>The site has no user accounts, newsletter or data submission forms. When you follow a link to an external website, that site's data practices apply.</p>
+
+    <p class="privacy-updated">Updated: 24 September 2026</p>
+  </section>
+</BaseLayout>
+
+<style>
+  .privacy-content { max-width: 800px; padding-block: 32px 80px; }
+  .privacy-content h2 { margin: 32px 0 12px; font-size: 1.5rem; }
+  .privacy-content p { color: var(--muted); line-height: 1.7; }
+  .privacy-updated { margin-top: 48px; }
+</style>
