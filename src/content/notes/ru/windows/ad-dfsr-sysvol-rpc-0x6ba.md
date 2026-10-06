@@ -14,7 +14,7 @@ translationKey: "windows/ad-dfsr-sysvol-rpc-0x6ba"
 
 ## Контекст
 
-После развёртывания двух Windows Server 2025 DC в `ad.okdent-spb.ru` базовая AD DS replication выглядела исправно, но полный `dcdiag` показывал ошибки.
+После развёртывания двух Windows Server 2025 DC в `ad.example.com` базовая AD DS replication выглядела исправно, но полный `dcdiag` показывал ошибки.
 
 Имена серверов и IP ниже обезличены.
 
