@@ -18,9 +18,9 @@ Renaming an existing Active Directory domain is an infrastructure migration, not
 This case covered the following production rename:
 
 ```text
-fm2.loc
+legacy.example.local
         ↓
-ad.fondmet.com
+ad.example.com
 ```
 
 The `FM2` NetBIOS name was retained. All IP addresses, endpoint/server names and internal GPO names in this article are anonymized.
@@ -29,9 +29,9 @@ The `FM2` NetBIOS name was retained. All IP addresses, endpoint/server names and
 
 | Component | Example |
 | --- | --- |
-| DC1 | `dc01.fm2.loc` / `10.20.30.10` |
-| DC2 | `dc02.fm2.loc` / `10.20.30.11` |
-| New namespace | `ad.fondmet.com` |
+| DC1 | `dc01.legacy.example.local` / `10.20.30.10` |
+| DC2 | `dc02.legacy.example.local` / `10.20.30.11` |
+| New namespace | `ad.example.com` |
 | NetBIOS | `FM2` |
 
 ## 1. Pre-flight
@@ -65,7 +65,7 @@ rendom /list
 Edit `Domainlist.xml`:
 
 ```text
-fm2.loc → ad.fondmet.com
+legacy.example.local → ad.example.com
 ```
 
 Keep the NetBIOS name as `FM2`.
@@ -105,32 +105,32 @@ In this environment, one DC temporarily experienced domain discovery and replica
 ## 5. Validate the new namespace
 
 ```cmd
-nltest /dsgetdc:ad.fondmet.com /kdc /force
-nslookup -type=SRV _ldap._tcp.dc._msdcs.ad.fondmet.com
+nltest /dsgetdc:ad.example.com /kdc /force
+nslookup -type=SRV _ldap._tcp.dc._msdcs.ad.example.com
 ```
 
 ```powershell
-Resolve-DnsName dc01.ad.fondmet.com
-Resolve-DnsName dc02.ad.fondmet.com
+Resolve-DnsName dc01.ad.example.com
+Resolve-DnsName dc02.ad.example.com
 ```
 
 Documentation-only addressing:
 
 ```text
-dc01.ad.fondmet.com → 10.20.30.10
-dc02.ad.fondmet.com → 10.20.30.11
+dc01.ad.example.com → 10.20.30.10
+dc02.ad.example.com → 10.20.30.11
 ```
 
 ## 6. Repair Group Policy references
 
 ```cmd
-gpfixup /olddns:fm2.loc /newdns:ad.fondmet.com /dc:dc01 /v
+gpfixup /olddns:legacy.example.local /newdns:ad.example.com /dc:dc01 /v
 ```
 
 Check that `gPCFileSysPath` points to the new SYSVOL:
 
 ```text
-\\ad.fondmet.com\SYSVOL\ad.fondmet.com\Policies\{GUID}
+\\ad.example.com\SYSVOL\ad.example.com\Policies\{GUID}
 ```
 
 On test clients:
@@ -148,13 +148,13 @@ The migration also exposed an older security-filtering issue in one internal GPO
 One internal management service still used:
 
 ```text
-security01.fm2.loc
+security01.legacy.example.local
 ```
 
 and had to be changed to:
 
 ```text
-security01.ad.fondmet.com
+security01.ad.example.com
 ```
 
 A temporary GPO was used to update client configuration. Its real internal name is anonymized.
@@ -179,9 +179,9 @@ A domain rename does not reissue third-party certificates. Review Subject and SA
 Anonymized examples:
 
 ```text
-app01.fm2.loc
-terminal01.fm2.loc
-security01.fm2.loc
+app01.legacy.example.local
+terminal01.legacy.example.local
+security01.legacy.example.local
 ```
 
 ## 9. NAS and ACLs
@@ -191,7 +191,7 @@ The file-storage system is anonymized as `nas01`.
 After rejoining:
 
 ```text
-nas01.ad.fondmet.com
+nas01.ad.example.com
 NAS01$@AD.FONDMET.COM
 ```
 
@@ -202,7 +202,7 @@ Validation included machine trust, user/group resolution, SIDs, RID/idmap and ex
 Search for the old namespace:
 
 ```cmd
-setspn -Q */*.fm2.loc
+setspn -Q */*.legacy.example.local
 ```
 
 Inspect a specific account:
