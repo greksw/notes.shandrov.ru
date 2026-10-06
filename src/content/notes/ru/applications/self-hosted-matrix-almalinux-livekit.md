@@ -23,7 +23,7 @@ translationKey: "applications/self-hosted-matrix-almalinux-livekit"
 Исходные требования были простыми:
 
 - приватный Matrix homeserver;
-- идентификаторы пользователей вида `@user:shandrov.ru`;
+- идентификаторы пользователей вида `@user:example.com`;
 - регистрация новых пользователей только администратором;
 - federation не нужна;
 - Android-клиент — Element X;
@@ -64,7 +64,7 @@ public IP
    v
 srv-prom / nginx
    |
-   +--> matrix.shandrov.ru
+   +--> matrix.example.com
    |       |
    |       v
    |   srv-matrix-01 nginx
@@ -72,7 +72,7 @@ srv-prom / nginx
    |       v
    |   Synapse :8008
    |
-   +--> rtc.shandrov.ru
+   +--> rtc.example.com
            |
            v
        srv-matrix-01 nginx
@@ -102,8 +102,8 @@ Internet
 Ключевой параметр Synapse:
 
 ```yaml
-server_name: "shandrov.ru"
-public_baseurl: "https://matrix.shandrov.ru/"
+server_name: "example.com"
+public_baseurl: "https://matrix.example.com/"
 ```
 
 Это принципиальное разделение.
@@ -111,9 +111,9 @@ public_baseurl: "https://matrix.shandrov.ru/"
 `server_name` задаёт Matrix identity:
 
 ```text
-@admin:shandrov.ru
-@user1:shandrov.ru
-@user2:shandrov.ru
+@admin:example.com
+@user1:example.com
+@user2:example.com
 ```
 
 А `public_baseurl` указывает, где реально находится homeserver.
@@ -167,9 +167,9 @@ user_directory:
 Решение — общий nginx ingress с SNI:
 
 ```text
-grafana.shandrov.ru -> Grafana
-matrix.shandrov.ru  -> Synapse frontend
-rtc.shandrov.ru     -> MatrixRTC / LiveKit
+grafana.example.com -> Grafana
+matrix.example.com  -> Synapse frontend
+rtc.example.com     -> MatrixRTC / LiveKit
 ```
 
 Внутри сети эти имена должны разрешаться не в публичный адрес, а прямо в LAN-адрес ingress.
@@ -177,9 +177,9 @@ rtc.shandrov.ru     -> MatrixRTC / LiveKit
 На MikroTik используются split-DNS записи:
 
 ```text
-grafana.shandrov.ru -> 10.20.30.10
-matrix.shandrov.ru  -> 10.20.30.10
-rtc.shandrov.ru     -> 10.20.30.10
+grafana.example.com -> 10.20.30.10
+matrix.example.com  -> 10.20.30.10
+rtc.example.com     -> 10.20.30.10
 ```
 
 Отсутствие split DNS для одного из имён сразу проявилось характерно: `curl` по локальному адресу работал, а браузер пытался идти через публичный IP и получал timeout.
@@ -188,10 +188,10 @@ rtc.shandrov.ru     -> 10.20.30.10
 
 ## 06 / MATRIX DISCOVERY
 
-Так как Matrix ID используют домен `shandrov.ru`, а homeserver находится на `matrix.shandrov.ru`, на основном сайте нужен:
+Так как Matrix ID используют домен `example.com`, а homeserver находится на `matrix.example.com`, на основном сайте нужен:
 
 ```text
-https://shandrov.ru/.well-known/matrix/client
+https://example.com/.well-known/matrix/client
 ```
 
 Содержимое:
@@ -199,12 +199,12 @@ https://shandrov.ru/.well-known/matrix/client
 ```json
 {
   "m.homeserver": {
-    "base_url": "https://matrix.shandrov.ru"
+    "base_url": "https://matrix.example.com"
   },
   "org.matrix.msc4143.rtc_foci": [
     {
       "type": "livekit",
-      "livekit_service_url": "https://rtc.shandrov.ru/livekit/jwt"
+      "livekit_service_url": "https://rtc.example.com/livekit/jwt"
     }
   ]
 }
@@ -292,8 +292,8 @@ MatrixRTC transport:
 matrix_rtc:
   transports:
     - type: livekit
-      url: "wss://rtc.shandrov.ru/livekit/sfu"
-      livekit_service_url: "https://rtc.shandrov.ru/livekit/jwt"
+      url: "wss://rtc.example.com/livekit/sfu"
+      livekit_service_url: "https://rtc.example.com/livekit/jwt"
 ```
 
 Для OpenID в listener добавлен resource:
@@ -358,8 +358,8 @@ MISSING_MATRIX_RTC_TRANSPORT
   "rtc_transports": [
     {
       "type": "livekit",
-      "url": "wss://rtc.shandrov.ru/livekit/sfu",
-      "livekit_service_url": "https://rtc.shandrov.ru/livekit/jwt"
+      "url": "wss://rtc.example.com/livekit/sfu",
+      "livekit_service_url": "https://rtc.example.com/livekit/jwt"
     }
   ]
 }
@@ -375,10 +375,10 @@ OPEN_ID_ERROR
 
 Element X успешно получал OpenID token от Synapse, но `lk-jwt-service` должен был проверить его через Matrix OpenID userinfo endpoint.
 
-Так как Matrix identity — `shandrov.ru`, сервис сначала искал:
+Так как Matrix identity — `example.com`, сервис сначала искал:
 
 ```text
-https://shandrov.ru/.well-known/matrix/server
+https://example.com/.well-known/matrix/server
 ```
 
 А такого endpoint ещё не было.
@@ -388,12 +388,12 @@ https://shandrov.ru/.well-known/matrix/server
 Решение:
 
 ```text
-https://shandrov.ru/.well-known/matrix/server
+https://example.com/.well-known/matrix/server
 ```
 
 ```json
 {
-  "m.server": "matrix.shandrov.ru:443"
+  "m.server": "matrix.example.com:443"
 }
 ```
 
@@ -401,7 +401,7 @@ https://shandrov.ru/.well-known/matrix/server
 
 ```json
 {
-  "sub": "@admin:shandrov.ru"
+  "sub": "@admin:example.com"
 }
 ```
 
@@ -511,9 +511,9 @@ TLS/ACME configuration
 В итоге получился закрытый self-hosted Matrix:
 
 ```text
-Matrix ID:        @user:shandrov.ru
-Homeserver:       matrix.shandrov.ru
-RTC:              rtc.shandrov.ru
+Matrix ID:        @user:example.com
+Homeserver:       matrix.example.com
+RTC:              rtc.example.com
 Client:           Element X
 Database:         PostgreSQL
 SFU:              LiveKit
