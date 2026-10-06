@@ -19,9 +19,9 @@ translationKey: "windows/active-directory-domain-rename-production-case"
 В этом кейсе выполнялось переименование:
 
 ```text
-fm2.loc
+legacy.example.local
         ↓
-ad.fondmet.com
+ad.example.com
 ```
 
 NetBIOS-имя `FM2` сохранялось. Все IP-адреса, имена конечных серверов и внутренние названия GPO в статье обезличены.
@@ -30,9 +30,9 @@ NetBIOS-имя `FM2` сохранялось. Все IP-адреса, имена 
 
 | Компонент | Пример |
 | --- | --- |
-| DC1 | `dc01.fm2.loc` / `10.20.30.10` |
-| DC2 | `dc02.fm2.loc` / `10.20.30.11` |
-| Новый namespace | `ad.fondmet.com` |
+| DC1 | `dc01.legacy.example.local` / `10.20.30.10` |
+| DC2 | `dc02.legacy.example.local` / `10.20.30.11` |
+| Новый namespace | `ad.example.com` |
 | NetBIOS | `FM2` |
 
 ## 1. Pre-flight
@@ -66,7 +66,7 @@ rendom /list
 В `Domainlist.xml` меняем:
 
 ```text
-fm2.loc → ad.fondmet.com
+legacy.example.local → ad.example.com
 ```
 
 NetBIOS оставляем `FM2`.
@@ -106,20 +106,20 @@ dcdiag /e /c /v
 ## 5. Проверка нового namespace
 
 ```cmd
-nltest /dsgetdc:ad.fondmet.com /kdc /force
-nslookup -type=SRV _ldap._tcp.dc._msdcs.ad.fondmet.com
+nltest /dsgetdc:ad.example.com /kdc /force
+nslookup -type=SRV _ldap._tcp.dc._msdcs.ad.example.com
 ```
 
 ```powershell
-Resolve-DnsName dc01.ad.fondmet.com
-Resolve-DnsName dc02.ad.fondmet.com
+Resolve-DnsName dc01.ad.example.com
+Resolve-DnsName dc02.ad.example.com
 ```
 
 Документационная адресация:
 
 ```text
-dc01.ad.fondmet.com → 10.20.30.10
-dc02.ad.fondmet.com → 10.20.30.11
+dc01.ad.example.com → 10.20.30.10
+dc02.ad.example.com → 10.20.30.11
 ```
 
 ## 6. Исправление Group Policy
@@ -127,13 +127,13 @@ dc02.ad.fondmet.com → 10.20.30.11
 После rename:
 
 ```cmd
-gpfixup /olddns:fm2.loc /newdns:ad.fondmet.com /dc:dc01 /v
+gpfixup /olddns:legacy.example.local /newdns:ad.example.com /dc:dc01 /v
 ```
 
 Проверяем, что `gPCFileSysPath` у GPO указывает на новый SYSVOL:
 
 ```text
-\\ad.fondmet.com\SYSVOL\ad.fondmet.com\Policies\{GUID}
+\\ad.example.com\SYSVOL\ad.example.com\Policies\{GUID}
 ```
 
 На клиентах:
@@ -151,13 +151,13 @@ gpresult /h C:\Temp\gpresult.html
 Один внутренний сервис использовал старый FQDN:
 
 ```text
-security01.fm2.loc
+security01.legacy.example.local
 ```
 
 После миграции:
 
 ```text
-security01.ad.fondmet.com
+security01.ad.example.com
 ```
 
 Для обновления клиентской конфигурации использовалась временная GPO с обезличенным названием.
@@ -182,9 +182,9 @@ Domain rename не перевыпускает сертификаты сторо�
 Примеры обезличенных старых имён:
 
 ```text
-app01.fm2.loc
-terminal01.fm2.loc
-security01.fm2.loc
+app01.legacy.example.local
+terminal01.legacy.example.local
+security01.legacy.example.local
 ```
 
 ## 9. NAS и ACL
@@ -194,7 +194,7 @@ security01.fm2.loc
 После повторного присоединения:
 
 ```text
-nas01.ad.fondmet.com
+nas01.ad.example.com
 NAS01$@AD.FONDMET.COM
 ```
 
@@ -205,7 +205,7 @@ NAS01$@AD.FONDMET.COM
 Поиск старого namespace:
 
 ```cmd
-setspn -Q */*.fm2.loc
+setspn -Q */*.legacy.example.local
 ```
 
 Проверка конкретного объекта:
