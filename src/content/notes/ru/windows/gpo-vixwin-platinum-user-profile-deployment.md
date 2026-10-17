@@ -136,3 +136,7 @@ translationKey: "windows/gpo-vixwin-platinum-user-profile-deployment"
 Для legacy-приложений миграция доменных пользователей может потребовать **инициализации HKCU до первого запуска**, а не обычного импорта .reg или копирования INI. Важны права и доступность сетевой базы, контекст выполнения, GPO security filtering, контроль репликации SYSVOL, время сценариев входа и безопасный rollback.
 
 Смежные кейсы: [7-Zip через GPO](/ru/notes/windows/gpo-software-deployment-7zip-auto-update/) и [диагностика Veyon и Active Directory](/ru/notes/windows/veyon-workgroup-ad-authentication-gpo-diagnostics/).
+
+## Примеры скриптов на GitHub
+
+Обезличенный демонстрационный комплект опубликован в [greksw/vixwin-gpo-deployment](https://github.com/greksw/vixwin-gpo-deployment): PowerShell-инициализация HKCU, обёртка logon script, CMD-ярлык и описание настройки GPO. Реальные клинические `.reg`-экспорты не публикуются. Хеши в примерах заведомо недействительны; **это не готовый production-деплой**.
