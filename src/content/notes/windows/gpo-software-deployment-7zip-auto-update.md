@@ -4,7 +4,7 @@ description: "A production case study of rolling out 7-Zip 26.04 with Group Poli
 category: "Windows"
 tags: ["active-directory", "gpo", "group-policy-preferences", "powershell", "scheduled-tasks", "7-zip", "msi", "sysvol", "dfsr", "automation"]
 published: 2026-10-14
-updated: 2026-10-14
+updated: 2026-10-17
 status: current
 testedOn: ["Active Directory Domain Services", "Windows 10/11", "Windows Server", "PowerShell 5.1", "Group Policy Preferences", "7-Zip 26.04"]
 featured: false
@@ -217,6 +217,14 @@ This is **not proof that every machine in the domain is compliant**. A full roll
 Before broad production rollout, establish a pilot OU, validate x86/x64 packages, verify UNC access for computer accounts, plan repository availability, define log retention and monitoring, and document rollback. Simply changing a manifest version does **not guarantee MSI downgrade**.
 
 **Takeaway:** GPO delivers and schedules the workload; operational reliability comes from an idempotent installer, trusted packages, verifiable logs and healthy directory and file replication.
+
+## PowerShell sources, GitHub and RDS protection
+
+The standalone **[7zip-gpo-deployment](https://github.com/greksw/7zip-gpo-deployment)** repository contains the [PowerShell installer](https://github.com/greksw/7zip-gpo-deployment/blob/main/scripts/Install-7Zip.ps1), [diagnostic helpers](https://github.com/greksw/7zip-gpo-deployment/tree/main/scripts), [source history](https://github.com/greksw/7zip-gpo-deployment/tree/main/history), and [changelog](https://github.com/greksw/7zip-gpo-deployment/blob/main/CHANGELOG.md).
+
+**Separate Remote Desktop Services (RDS) safeguard:** `Install-7Zip-RDS.ps1` queries Windows Terminal Services sessions and defers the centrally managed installer whenever any signed-in user session exists, including a disconnected one. It does not sign out users or reboot the server. Exit code `0` for a deferred run **does not establish successful installation**; verify completion after a subsequent scheduled attempt.
+
+**Scope:** the published scripts are anonymized adaptations with documentation-only paths, not byte-identical production versions. They have not been independently executed on Windows after redaction. Passing GitHub Actions static checks does not replace a controlled deployment and security review.
 
 ## References
 

@@ -4,7 +4,7 @@ description: "Практический кейс развёртывания 7-Zip
 category: "Windows"
 tags: ["active-directory", "gpo", "group-policy-preferences", "powershell", "scheduled-tasks", "7-zip", "msi", "sysvol", "dfsr", "automation"]
 published: 2026-10-14
-updated: 2026-10-14
+updated: 2026-10-17
 status: current
 testedOn: ["Active Directory Domain Services", "Windows 10/11", "Windows Server", "PowerShell 5.1", "Group Policy Preferences", "7-Zip 26.04"]
 featured: false
@@ -219,6 +219,14 @@ $relative = 'NETLOGON\Software\7Zip\Scripts\Install-7Zip.ps1'
 Перед промышленным применением нужны пилотная OU, проверка x64/x86, контроль прав на UNC, отказоустойчивость источника пакетов, журналирование ошибок, сценарий rollback и отчёт по версии ПО. Процедура отката должна учитывать, что изменение манифеста **не гарантирует автоматический downgrade** MSI.
 
 **Основной вывод:** GPO обеспечивает доставку и периодическое выполнение, но надёжность развёртывания определяется идемпотентным скриптом, контролем пакетов, наблюдаемостью результата и исправной репликацией каталога/файлов.
+
+## Исходники PowerShell, GitHub и защита RDS
+
+Исходный код и вспомогательные материалы опубликованы в отдельном репозитории **[7zip-gpo-deployment](https://github.com/greksw/7zip-gpo-deployment)**. В нём находятся [основной PowerShell-установщик](https://github.com/greksw/7zip-gpo-deployment/blob/main/scripts/Install-7Zip.ps1), [диагностика](https://github.com/greksw/7zip-gpo-deployment/tree/main/scripts), [исторические версии](https://github.com/greksw/7zip-gpo-deployment/tree/main/history) и [CHANGELOG](https://github.com/greksw/7zip-gpo-deployment/blob/main/CHANGELOG.ru.md).
+
+**Отдельный сценарий для терминальных серверов (RDS):** `Install-7Zip-RDS.ps1` запрашивает пользовательские сессии через Windows Terminal Services API и откладывает запуск основного установщика, если присутствует хотя бы одна сессия, включая отключённую. Он не завершает сеансы и не инициирует перезагрузку. Код возврата `0` при таком откладывании **не означает**, что обновление было выполнено: состояние нужно проверить позднее.
+
+**Граница применимости:** опубликованные скрипты обезличены, содержат демонстрационные пути и не являются побайтовыми копиями производственных версий. Они не проходили отдельное исполнение на Windows после адаптации. Статическая проверка в GitHub Actions не заменяет пилотной установки и проверки безопасности.
 
 ## Ссылки
 
