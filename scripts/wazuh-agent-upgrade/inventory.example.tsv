@@ -1,0 +1,5 @@
+# ID<TAB>exact_agent_name<TAB>linux|windows<TAB>upgrade|skip
+101	example-pve02	linux	upgrade
+102	example-pve03	linux	upgrade
+103	example-terminal01	windows	upgrade
+104	example-legacy2008	windows	skip
