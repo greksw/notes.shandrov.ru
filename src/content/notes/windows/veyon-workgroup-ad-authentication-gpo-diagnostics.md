@@ -4,7 +4,7 @@ description: "A Veyon 4.11.3 case study: a non-domain Windows Master, matching l
 category: "Windows"
 tags: ["veyon", "windows", "active-directory", "workgroup", "logon-authentication", "gpo", "powershell", "scheduled-tasks", "troubleshooting", "ldap"]
 published: 2026-10-16
-updated: 2026-10-16
+updated: 2026-10-17
 status: current
 testedOn: ["Veyon 4.11.3", "Windows 11 WORKGROUP", "Windows 10/11 AD clients", "Active Directory", "PowerShell 5.1", "Group Policy Preferences"]
 featured: false
@@ -228,6 +228,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Veyon-Diagnostics.ps1 
 ```
 
 To investigate 4624/4625 events, run the section 6 command on the remote Windows target. This helper is **not** a copy of production `Install-Veyon-v1.3.ps1`.
+
+## GitHub source code and version history
+
+**[Veyon GPO Deployment — PowerShell scripts and documentation](https://github.com/greksw/veyon-gpo-deployment)** provides the current illustrative `scripts/Install-Veyon.ps1`, the read-only `scripts/Veyon-Diagnostics.ps1`, and the GPO deployment guide.
+
+The **[history/](https://github.com/greksw/veyon-gpo-deployment/tree/main/history)** directory includes anonymized **v1.0–v1.3** snapshots. See **[CHANGELOG.md](https://github.com/greksw/veyon-gpo-deployment/blob/main/CHANGELOG.md)** for the verified differences between those stages.
+
+**Important:** these are adapted public examples, not byte-for-byte copies of the production scripts. Artifact hashes and site-specific settings have intentionally been replaced. The modified versions have not been independently executed on Windows and must be reviewed before reuse.
 
 ## Results and limits
 

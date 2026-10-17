@@ -4,7 +4,7 @@ description: "Практический кейс Veyon 4.11.3: Windows WORKGROUP 
 category: "Windows"
 tags: ["veyon", "windows", "active-directory", "workgroup", "logon-authentication", "gpo", "powershell", "scheduled-tasks", "troubleshooting", "ldap"]
 published: 2026-10-16
-updated: 2026-10-16
+updated: 2026-10-17
 status: current
 testedOn: ["Veyon 4.11.3", "Windows 11 WORKGROUP", "Windows 10/11 AD clients", "Active Directory", "PowerShell 5.1", "Group Policy Preferences"]
 featured: false
@@ -234,6 +234,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Veyon-Diagnostics.ps1 
 ```
 
 Для диагностики входов Security 4624/4625 используйте команду из раздела 6 непосредственно на целевом Windows-хосте. Производственный `Install-Veyon-v1.3.ps1` — другой файл: в этой публикации не заявляется, что диагностический скрипт является его исходником или полной копией.
+
+## Исходный код и история изменений на GitHub
+
+**[Veyon GPO Deployment — исходники PowerShell и документация](https://github.com/greksw/veyon-gpo-deployment)** — отдельный репозиторий с текущим демонстрационным `scripts/Install-Veyon.ps1`, диагностическим `scripts/Veyon-Diagnostics.ps1` и инструкцией по настройке GPO.
+
+В каталоге **[history/](https://github.com/greksw/veyon-gpo-deployment/tree/main/history)** опубликованы обезличенные версии **v1.0–v1.3**; точные изменения между ними описаны в **[CHANGELOG на русском](https://github.com/greksw/veyon-gpo-deployment/blob/main/CHANGELOG.ru.md)**.
+
+**Важно:** это адаптированные публичные примеры, а не побайтовые копии production-скриптов. Контрольные суммы и параметры инфраструктуры намеренно заменены; перед применением требуется собственная проверка, а модифицированные версии не проходили отдельное тестирование на Windows.
 
 ## Итоги и границы результата
 
