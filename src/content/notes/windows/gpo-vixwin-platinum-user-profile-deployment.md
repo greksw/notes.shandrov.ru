@@ -106,3 +106,7 @@ To roll back, remove GpoApply for the targeted group, sign out, restore the affe
 Legacy Windows applications may require **first-run HKCU pre-initialization**, not merely importing a .reg file or copying INI. The successful pattern combined verified registry types, a working NAS mapping, least-privilege user-context execution, GPO security filtering, SYSVOL replication checks, logging and repeat-safe application.
 
 Related case studies: [7-Zip GPO deployment](/notes/windows/gpo-software-deployment-7zip-auto-update/) and [Veyon / AD troubleshooting](/notes/windows/veyon-workgroup-ad-authentication-gpo-diagnostics/).
+
+## GitHub scripts
+
+A sanitized **non-production demonstration** is available at [greksw/vixwin-gpo-deployment](https://github.com/greksw/vixwin-gpo-deployment): HKCU initializer, guarded logon launcher, CMD wrapper and GPO instructions. Actual clinical `.reg` exports are excluded, and example SHA256 values are deliberately invalid. **Do not run without site-specific security review and configuration.**
