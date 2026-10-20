@@ -45,6 +45,15 @@ def integer(item, name):
         return None
 
 
+def integer(item, field):
+    try:
+        v = get(item, field)
+        n = int(v)
+        return n if n >= 0 else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def vendor(model):
     text = model.casefold()
     if "intel" in text:
