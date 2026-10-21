@@ -24,6 +24,7 @@ from KlAkOAPI.Params import KlAkArray
 from KlAkOAPI.SrvView import KlAkSrvView
 from ksc_hardware_rules import (
     classify_storage, host_status, modernization_priority, vram_mb,
+    normalized_cpu_cores,
 )
 
 
@@ -162,7 +163,7 @@ def hardware_info(records):
     disks, _ = dedup_hardware(records, 3)
     gpus, _ = dedup_hardware(records, 4)
     names = "; ".join(sorted({r["model"] for r in cpus}))
-    cores = sum(r["cores"] for r in cpus) if cpus and all(r["cores"] for r in cpus) else ""
+    _cores_raw, cores, core_audit = normalized_cpu_cores(cpus)
     threads = sum(r["threads"] for r in cpus) if cpus and all(r["threads"] for r in cpus) else ""
     freq = "; ".join(sorted({str(r["speed"]) for r in cpus if r["speed"]}))
     ram = gib(sum(r["xpar3"] for r in rams)) if rams and all(r["xpar3"] for r in rams) else ""
@@ -172,6 +173,8 @@ def hardware_info(records):
     disk_type = "; ".join(sorted({type_of_storage(r) for r in disks}))
     disk_models = "; ".join(sorted({r["model"] for r in disks}))
     checks = (["Повторы CPU удалены"] if duplicates else [])
+    if core_audit:
+        checks.append(core_audit)
     checks += ["Нет CPU"] if not cpus else []
     checks += ["Нет RAM"] if not rams else []
     checks += ["Нет GPU"] if not gpus else []
@@ -311,12 +314,15 @@ def main():
     hwrows, details_ram, details_gpu, details_disk = [], [], [], []
     by_pc, model_hosts, cpu_duplicate_hosts = {}, defaultdict(set), 0
     disk_by_pc = {}
+    cpu_audit_by_pc = {}
     for host_id, host in sorted(confirmed.items(), key=lambda x: x[1]["name"]):
         pc = host["name"]
         data, cpus, rams, gpus, disks, duplicates = hardware_info(hardware.get(host_id, []))
         cpu_duplicate_hosts += bool(duplicates)
         full = [pc, *data[:-1], host["last_seen"], data[-1]]
-        hwrows.append(full)
+        raw_cores, _norm_cores, audit = normalized_cpu_cores(cpus)
+        hwrows.append([*full, raw_cores, audit])
+        cpu_audit_by_pc[pc] = (raw_cores, audit)
         by_pc[pc] = full
         disk_by_pc[pc] = [type_of_storage(d) for d in disks]
         for cpu in cpus:
@@ -341,7 +347,7 @@ def main():
                          ", ".join(sorted(installed.get("SOLIDWORKS", set()))),
                          ", ".join(sorted(installed.get("КОМПАС-3D", set()))),
                          ", ".join(sorted(installed.get("Siemens NX", set()))),
-                         row[-1]])
+                         row[-1], *cpu_audit_by_pc[pc]])
 
     priority_rows = []
     for pc, installed in sorted(cad.items()):
@@ -390,13 +396,13 @@ def main():
         ["Пояснение", "Приоритет модернизации — предварительная эвристика, не benchmark"],
         ["Источник", "Сохранённая инвентаризация KSC, не live-проверка"]
     ], [45, 80])
-    sheet(wb, "Оборудование", headers, hwrows,
-          [26, 59, 20, 16, 18, 14, 15, 23, 16, 16, 59, 18, 18, 17, 29, 58, 34, 35])
+    sheet(wb, "Оборудование", [*headers, "Ядра KSC исходно", "Нормализация ядер"], hwrows,
+          [26, 59, 20, 16, 18, 14, 15, 23, 16, 16, 59, 18, 18, 17, 29, 58, 34, 35, 21, 74])
     summary_rows = [[v, model, len(pcs)] for (v, model), pcs in
                     sorted(model_hosts.items(), key=lambda x: (-len(x[1]), x[0][1]))]
     sheet(wb, "Сводка CPU", ["Производитель", "Модель", "Компьютеров"], summary_rows, [20, 65, 19])
-    sheet(wb, "CPU + CAD", [*headers[:-2], "SOLIDWORKS", "КОМПАС-3D", "Siemens NX", "Контроль"],
-          cad_rows, [26, 59, 20, 16, 18, 14, 15, 23, 16, 16, 59, 18, 18, 17, 29, 58, 30, 30, 30, 35])
+    sheet(wb, "CPU + CAD", [*headers[:-2], "SOLIDWORKS", "КОМПАС-3D", "Siemens NX", "Контроль", "Ядра KSC исходно", "Нормализация ядер"],
+          cad_rows, [26, 59, 20, 16, 18, 14, 15, 23, 16, 16, 59, 18, 18, 17, 29, 58, 30, 30, 30, 35, 21, 74])
     sheet(wb, "Модули RAM", ["Компьютер", "RAM", "Производитель", "ГиБ", "Тип", "PartNum", "МГц"],
           details_ram, [26, 56, 25, 16, 20, 33, 18])
     sheet(wb, "GPU", ["Компьютер", "Модель GPU", "Производитель", "VRAM МБ (пусто=нет данных)"],
@@ -423,6 +429,7 @@ def main():
         ["VM", "Подтверждённые ВМ и неоднозначные HST_VM_TYPE разделяются"],
         ["Подтверждённый физический ПК", "Только локальный список --physical-overrides после независимой проверки; сигнатуры ВМ имеют приоритет"],
         ["CPU дубликаты", "Одинаковая сигнатура исключена из суммы; реальные два сокета проверить"],
+        ["AMD FX-6100, FX-8320", "При сигнатуре KSC (3/6 и 4/8): нормализовать ядра до 6 и 8; исходное поле хранится отдельно"],
         ["Ограничение", "Не учитываются тесты производительности CAD, размеры сборок, цена обновления"],
         ["Источник", "Последняя сохранённая аппаратная инвентаризация KSC"],
     ], [38, 112])
@@ -431,6 +438,7 @@ def main():
     print("===== RESULTS =====")
     print("KSC hosts:", len(hosts), "confirmed physical:", len(confirmed), "excluded/unknown:", len(hosts) - len(confirmed))
     print("Duplicate CPU hosts:", cpu_duplicate_hosts)
+    print("Normalized CPU core hosts:", sum(bool(note and "нормализовано" in note) for _,note in cpu_audit_by_pc.values()))
     print("VM signals:", vm_confirmed, "manual-review devices:", review_required)
     print("Physical overrides applied:", len(verified_physical))
     print("Priority CAD:", dict(Counter(row[1] for row in priority_rows)))
