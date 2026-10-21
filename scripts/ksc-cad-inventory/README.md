@@ -55,3 +55,39 @@ The report includes CPU, RAM, GPU, storage, CAD, an **Исключения** she
 - Disk type uses conservative **specific model-family** rules and direct type/RPM evidence. All unsupported models remain **Не определён**.
 - The CAD modernization priority is a **preliminary triage score**, not an application benchmark, performance guarantee, GPU certification or purchasing decision.
 - A separate end-to-end run of the new revision against the productive KSC instance is still required.
+
+
+### Physical Windows PCs mistakenly flagged as Hyper-V
+
+Some physical Windows PCs report HST_VM_TYPE=4 to KSC. A local hypervisor, including VBS/Memory Integrity, is a possible explanation but **the KSC value alone does not prove a VM guest**. Windows version is not used as a physical/virtual classifier.
+
+Before adding a physical override, check each ambiguous endpoint independently (e.g., in PowerShell):
+
+~~~powershell
+Get-CimInstance Win32_ComputerSystem |
+  Select-Object Name,Manufacturer,Model,HypervisorPresent
+Get-CimInstance Win32_BIOS |
+  Select-Object Manufacturer,SMBIOSBIOSVersion,SerialNumber
+Get-CimInstance Win32_Processor |
+  Select-Object Name,NumberOfCores,NumberOfLogicalProcessors
+~~~
+
+HypervisorPresent=True does NOT imply the computer is a VM guest. Cross-check Manufacturer/Model and BIOS against actual hardware inventory.
+
+For verified physical devices only, create a **local private** physical_overrides.csv:
+
+~~~csv
+Computer,VerifiedPhysical
+EXAMPLE-NUC,yes
+~~~
+
+Replace EXAMPLE-NUC with the exact real computer name. Then run:
+
+~~~bash
+python ksc_cpu_cad_export.py --insecure-local-test \
+  --cad-csv cad_hosts.csv \
+  --physical-overrides physical_overrides.csv \
+  --output ksc_hardware_cad_physical_v4.xlsx
+~~~
+
+Overrides never bypass virtual CPU/name signals. Never commit physical_overrides.csv with corporate device names to public GitHub. Unknown hosts remain excluded until manually verified.
