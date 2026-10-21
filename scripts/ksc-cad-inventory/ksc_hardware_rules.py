@@ -8,22 +8,32 @@ import re
 VM_CPU = re.compile(r"QEMU|Virtual CPU|Common KVM|VMware Virtual|Hyper-V Virtual", re.I)
 VM_NAME = re.compile(r"(?:^|[-_])VM\d*(?:$|[-_])|\bVIRTUAL[-_]", re.I)
 
-def host_status(host, hardware):
+def host_status(host, hardware, verified_physical=False):
+    """Classify conservatively. Windows/Hyper-V flag alone is not sufficient evidence.
+
+    A local, user-verified physical override is permitted only when neither
+    the CPU name nor the machine name independently indicates a VM.
+    """
     pc = host.get("name", "")
     try:
         vm_type = int(host.get("vm_type"))
     except (ValueError, TypeError):
         vm_type = 0
-    names = " ".join(str(d.get("model","")) for d in hardware if d.get("type") == 1)
+    names = " ".join(str(d.get("model", "")) for d in hardware if d.get("type") == 1)
     if VM_CPU.search(names):
         return "Виртуальная машина", "Виртуальная модель CPU"
     if VM_NAME.search(pc):
         return "Виртуальная машина", "Признак VM в имени ПК (проверить)"
+    if verified_physical:
+        return "Физический ПК", "Подтверждено отдельно: physical-overrides"
     if vm_type == 2:
         return "Физический ПК", "HST_VM_TYPE=2"
     if vm_type == 0:
         return "Проверить вручную", "HST_VM_TYPE неизвестен"
-    return "Проверить вручную", f"HST_VM_TYPE={vm_type}; нет независимого признака ВМ"
+    return "Проверить вручную", (
+        f"HST_VM_TYPE={vm_type}; без независимого подтверждения виртуализации. "
+        "Hyper-V/VBS может работать на физическом Windows"
+    )
 
 NVME = [
     r"\bMSI\s+M(?:390|450|460|470|480)\b",
