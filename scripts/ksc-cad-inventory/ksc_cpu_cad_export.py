@@ -40,14 +40,6 @@ def string(item, name):
     return "" if value is None else str(value).strip()
 
 
-def integer(item, name):
-    try:
-        value = int(get(item, name))
-        return value if value > 0 else None
-    except (ValueError, TypeError):
-        return None
-
-
 def integer(item, field):
     try:
         v = get(item, field)
@@ -383,7 +375,7 @@ def main():
           cad_rows, [26, 59, 20, 16, 18, 14, 15, 23, 16, 16, 59, 18, 18, 17, 29, 58, 30, 30, 30, 35])
     sheet(wb, "Модули RAM", ["Компьютер", "RAM", "Производитель", "ГиБ", "Тип", "PartNum", "МГц"],
           details_ram, [26, 56, 25, 16, 20, 33, 18])
-    sheet(wb, "GPU", ["Компьютер", "Модель GPU", "Производитель", "VRAM МБ (0=нет данных)"],
+    sheet(wb, "GPU", ["Компьютер", "Модель GPU", "Производитель", "VRAM МБ (пусто=нет данных)"],
           details_gpu, [26, 59, 26, 26])
     sheet(wb, "Накопители", ["Компьютер", "Модель", "Производитель", "ГиБ", "Класс", "Основание", "RPM"],
           details_disk, [26, 59, 26, 18, 31, 41, 16])
