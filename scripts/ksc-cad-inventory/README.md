@@ -91,3 +91,12 @@ python ksc_cpu_cad_export.py --insecure-local-test \
 ~~~
 
 Overrides never bypass virtual CPU/name signals. Never commit physical_overrides.csv with corporate device names to public GitHub. Unknown hosts remain excluded until manually verified.
+
+
+### AMD FX core-count anomaly (KSC 15.1)
+
+On observed physical AMD FX-6100 and FX-8320 systems, KSC returned CpuCores=3, CpuThreads=6 and CpuCores=4, CpuThreads=8, respectively. These CPUs are sold/specified as six-core and eight-core processors, with two integer cores per Bulldozer/Piledriver module.
+
+The exporter normalizes **only these two precise model signatures**, and **only when** the reported counts match the observed 3/6 and 4/8 cases. The Excel Hardware and CPU+CAD sheets preserve **Ядра KSC исходно** and **Нормализация ядер** audit columns. For unknown AMD FX models, raw counts are retained until independently confirmed. Genuine multi-socket CPU topology remains subject to manual checks.
+
+To test, download both scripts again (ksc_cpu_cad_export.py and ksc_hardware_rules.py), compile and rerun the exporter. An existing XLSX is a historical snapshot and will not automatically update.
