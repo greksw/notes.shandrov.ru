@@ -236,6 +236,8 @@ def main():
     parser.add_argument("--cad-csv", type=Path, default=Path("cad_hosts.csv"))
     parser.add_argument("--output", type=Path, default=Path("ksc_hardware_cad_physical.xlsx"))
     parser.add_argument("--probe", action="store_true", help="Show device/VM type coverage before exporting")
+    parser.add_argument("--physical-overrides", type=Path, default=None,
+                        help="Local CSV (Computer,VerifiedPhysical) confirmed by independent endpoint checks")
     args = parser.parse_args()
 
     if args.insecure_local_test and args.ca_bundle:
@@ -271,11 +273,32 @@ def main():
             print(f"dev_type={kind} records={types[kind]}; hosts={sum(any(d['type']==kind for d in rows) for rows in hardware.values())}")
         return
 
+    verified_physical = set()
+    if args.physical_overrides:
+        if not args.physical_overrides.is_file():
+            parser.error("Missing override CSV: " + str(args.physical_overrides))
+        with args.physical_overrides.open(encoding="utf-8-sig", newline="") as stream:
+            reader = csv.DictReader(stream)
+            if not {"Computer", "VerifiedPhysical"}.issubset(reader.fieldnames or []):
+                parser.error("Override CSV columns must be: Computer,VerifiedPhysical")
+            known_names = {item["name"] for item in hosts.values()}
+            for item in reader:
+                name = (item["Computer"] or "").strip().upper()
+                ok = (item["VerifiedPhysical"] or "").strip().lower()
+                if ok not in ("yes", "true", "1", ""):
+                    parser.error(f"Unexpected VerifiedPhysical flag for {name}: {ok}")
+                if not name or ok == "":
+                    continue
+                if name not in known_names:
+                    parser.error(f"Override PC does not exist in current KSC hosts: {name}")
+                verified_physical.add(name)
+        print("Independently verified physical overrides:", len(verified_physical))
+
     confirmed, excluded = {}, []
     vm_confirmed = 0
     review_required = 0
     for host_id, h in hosts.items():
-        status, reason = host_status(h, hardware.get(host_id, []))
+        status, reason = host_status(h, hardware.get(host_id, []), verified_physical=h["name"] in verified_physical)
         if status == "Физический ПК":
             confirmed[host_id] = h
         else:
@@ -363,6 +386,7 @@ def main():
         ["CAD компьютеров вне выборки", len(cad_unmatched)],
         ["Критерий", "HST_VM_TYPE=2, нет признаков виртуализации"],
         ["Неизвестный тип", "Исключается до ручной проверки"],
+        ["Ручное подтверждение физических", len(verified_physical)],
         ["Пояснение", "Приоритет модернизации — предварительная эвристика, не benchmark"],
         ["Источник", "Сохранённая инвентаризация KSC, не live-проверка"]
     ], [45, 80])
@@ -397,6 +421,7 @@ def main():
         ["VRAM", "KSC сообщил 0 либо не передал значение -> пусто (не 0 МБ)"],
         ["SSD/HDD", "Модельное семейство/явный тип/RPM; неизвестным оставляем неизвестный"],
         ["VM", "Подтверждённые ВМ и неоднозначные HST_VM_TYPE разделяются"],
+        ["Подтверждённый физический ПК", "Только локальный список --physical-overrides после независимой проверки; сигнатуры ВМ имеют приоритет"],
         ["CPU дубликаты", "Одинаковая сигнатура исключена из суммы; реальные два сокета проверить"],
         ["Ограничение", "Не учитываются тесты производительности CAD, размеры сборок, цена обновления"],
         ["Источник", "Последняя сохранённая аппаратная инвентаризация KSC"],
@@ -406,7 +431,8 @@ def main():
     print("===== RESULTS =====")
     print("KSC hosts:", len(hosts), "confirmed physical:", len(confirmed), "excluded/unknown:", len(hosts) - len(confirmed))
     print("Duplicate CPU hosts:", cpu_duplicate_hosts)
-    print("Confirmed VMs:", vm_confirmed, "manual-review devices:", review_required)
+    print("VM signals:", vm_confirmed, "manual-review devices:", review_required)
+    print("Physical overrides applied:", len(verified_physical))
     print("Priority CAD:", dict(Counter(row[1] for row in priority_rows)))
     print("RAM rows:", len(details_ram), "GPU rows:", len(details_gpu), "storage rows:", len(details_disk))
     print("CAD computers:", len(cad), "physical with inventory:", len(cad_rows), "excluded/unknown:", len(cad_unmatched))
