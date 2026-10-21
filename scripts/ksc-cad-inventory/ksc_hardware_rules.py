@@ -122,3 +122,42 @@ def modernization_priority(cpu, ram_gib, gpu, disk_classes, cad):
         points+=1; reasons.append("SOLIDWORKS 2023/NX на старой платформе")
     priority = "Высокий" if points>=5 else "Средний" if points>=2 else "Низкий"
     return priority, points, "; ".join(reasons) or "Нет выявленных признаков высокого риска"
+
+
+def normalized_cpu_cores(cpus):
+    """Return (reported_cores, normalized_cores, audit_note).
+
+    KSC can report AMD FX Bulldozer/Piledriver modules instead of marketed
+    integer cores on specific models. Fix ONLY observed, documented signatures,
+    not every AMD CPU where logical threads exceed the reported core count.
+    """
+    if not cpus:
+        return "", "", "CPU отсутствует в аппаратной инвентаризации"
+    raw_values = [cpu.get("cores") for cpu in cpus]
+    if any(not isinstance(value, int) or value <= 0 for value in raw_values):
+        return "", "", "KSC не передал достоверное количество ядер"
+    reported = sum(raw_values)
+    if len(cpus) != 1:
+        return reported, reported, "Несколько CPU: требуется проверка сокетов"
+
+    cpu = cpus[0]
+    name = cpu.get("model", "")
+    threads = cpu.get("threads")
+    known = (
+        (r"\bAMD\s+FX(?:\s*\(tm\))?[-\s]*6100\b", 3, 6),
+        (r"\bAMD\s+FX(?:\s*\(tm\))?[-\s]*8320\b", 4, 8),
+    )
+    for pattern, modules, physical_cores in known:
+        if not re.search(pattern, name, re.I):
+            continue
+        if reported == modules and threads == physical_cores:
+            return reported, physical_cores, (
+                f"AMD FX: KSC={reported} модулей, нормализовано до "
+                f"{physical_cores} ядер по спецификации модели"
+            )
+        if reported == physical_cores and threads == physical_cores:
+            return reported, reported, "AMD FX: KSC уже соответствует спецификации"
+        return reported, reported, (
+            "AMD FX: неожиданные значения KSC, автоматическая коррекция отключена"
+        )
+    return reported, reported, ""
