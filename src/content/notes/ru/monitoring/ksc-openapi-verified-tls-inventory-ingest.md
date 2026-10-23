@@ -4,7 +4,7 @@ description: "Разбор ошибки self-signed certificate in certificate c
 category: "Мониторинг и безопасность"
 tags: ["kaspersky", "ksc", "tls", "openssl", "python", "ssh", "fastapi", "sqlite", "security"]
 published: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-23
 status: current
 testedOn: ["Kaspersky Security Center 15.1", "Python 3.12", "OpenSSL", "AlmaLinux 9", "FastAPI", "OpenSSH"]
 featured: false
@@ -147,6 +147,10 @@ ssh -T -i ~/.ssh/inventory_ingest_ed25519 \
 Это **успешный пилот**, не завершённое массовое внедрение. Перед расширением необходимы очередь, ограничение параллелизма, журналирование, резервное копирование SQLite, ревизия широких разрешений KSC и контроль ротации сертификатов.
 
 Связанные статьи: [аппаратная RAM-инвентаризация](/ru/notes/monitoring/ksc-openapi-ram-module-inventory/) и [ошибка 1184 и RBAC KSC](/ru/notes/monitoring/ksc-openapi-nagrdu-1184-rbac/).
+
+## Публичная реализация
+
+В [KSC Hardware Inventory v0.2.1](https://github.com/greksw/ksc-hardware-inventory) доступны [проверяемое TLS-подключение к KSC и Gateway](https://github.com/greksw/ksc-hardware-inventory/blob/main/ksc_inventory/ksc_runner.py), [валидация и SSH-импорт отчёта](https://github.com/greksw/ksc-hardware-inventory/blob/main/ksc_inventory/import_result.py), [обзор модели угроз](https://github.com/greksw/ksc-hardware-inventory/blob/main/SECURITY.md) и [протокол проверки реального пилота](https://github.com/greksw/ksc-hardware-inventory/blob/main/VALIDATION.ru.md). API-токены, закрытые ключи, доверенные сертификаты инфраструктуры и реальные результаты инвентаризации в публичный репозиторий не включены.
 
 ### Документация
 

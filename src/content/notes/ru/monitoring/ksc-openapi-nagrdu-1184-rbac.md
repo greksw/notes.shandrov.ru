@@ -4,7 +4,7 @@ description: "Практическая диагностика Access denied че
 category: "Мониторинг и безопасность"
 tags: ["kaspersky", "ksc", "openapi", "rbac", "nag-rdu", "troubleshooting", "automation"]
 published: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-23
 status: current
 testedOn: ["Kaspersky Security Center 15.1", "KlAkOAPI 1.0.0.0", "Python 3.12"]
 featured: false
@@ -117,6 +117,10 @@ if finalized and not succeeded:
 После устранения прав была подтверждена успешная загрузка ZIP, удалённое исполнение PowerShell, скачивание отчёта и запись результата в SQLite. Это не означает, что массовый запуск уже проверен.
 
 Продолжение: [сбор модулей RAM через KSC Open API](/ru/notes/monitoring/ksc-openapi-ram-module-inventory/) и [TLS + защищённая доставка](/ru/notes/monitoring/ksc-openapi-verified-tls-inventory-ingest/).
+
+## Код и воспроизводимый пилот
+
+В [репозитории KSC Hardware Inventory](https://github.com/greksw/ksc-hardware-inventory) опубликован [Python-оркестратор](https://github.com/greksw/ksc-hardware-inventory/blob/main/ksc_inventory/ksc_runner.py) с проверкой Host GUID, подключением через Gateway и контролем асинхронного выполнения. Отдельно см. [инструкцию для KSC Open API](https://github.com/greksw/ksc-hardware-inventory/blob/main/README.ru.md) и [правила безопасности](https://github.com/greksw/ksc-hardware-inventory/blob/main/SECURITY.md). Набор привилегий, требуемый для конкретных вызовов, определяется ответом KSC; права на выполнение нельзя выдавать без ограничения области устройств.
 
 ### Документация
 

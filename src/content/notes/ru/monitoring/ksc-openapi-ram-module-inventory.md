@@ -4,7 +4,7 @@ description: "Практический кейс: почему аппаратно
 category: "Мониторинг и безопасность"
 tags: ["kaspersky", "ksc", "openapi", "ram", "hardware-inventory", "powershell", "python", "sqlite", "network-agent"]
 published: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-23
 status: current
 testedOn: ["Kaspersky Security Center 15.1", "KlAkOAPI 1.0.0.0", "Windows PowerShell 5.1", "Python 3.12", "AlmaLinux 9"]
 featured: false
@@ -142,6 +142,10 @@ UNIQUE(computer_name, collected_at)
 - Не публиковать реальные FQDN, IP, идентификаторы устройств, токены и выгрузки из SQLite.
 
 Продолжение: [ошибка KSC 1184 и права для NagRdu](/ru/notes/monitoring/ksc-openapi-nagrdu-1184-rbac/) и [TLS + защищённая доставка RAM-отчётов](/ru/notes/monitoring/ksc-openapi-verified-tls-inventory-ingest/).
+
+## Исходный код
+
+Опубликован обезличенный комплект **[KSC Hardware Inventory v0.2.1](https://github.com/greksw/ksc-hardware-inventory)**: [Python-оркестратор KSC Open API](https://github.com/greksw/ksc-hardware-inventory/blob/main/ksc_inventory/ksc_runner.py), [PowerShell-коллектор для Network Agent](https://github.com/greksw/ksc-hardware-inventory/blob/main/collectors/ksc/utility/Collect-RamInventory.ps1), [проверка ZIP/JSON](https://github.com/greksw/ksc-hardware-inventory/blob/main/ksc_inventory/result.py) и [инструкция на русском](https://github.com/greksw/ksc-hardware-inventory/blob/main/README.ru.md). [Протокол испытаний](https://github.com/greksw/ksc-hardware-inventory/blob/main/VALIDATION.ru.md) подтверждает один реальный пилотный компьютер, но не массовое развёртывание.
 
 ### Документация
 
