@@ -4,7 +4,7 @@ description: "A Proxmox VE 9.2 and Ceph Squid 19.2.7 upgrade case covering Coros
 category: "Proxmox & Virtualization"
 tags: ["proxmox", "ceph", "cephx", "corosync", "rbd", "quorum"]
 published: 2026-11-15
-updated: 2026-11-15
+updated: 2026-11-17
 status: current
 testedOn: ["pve-manager 9.2.26", "Ceph Squid 19.2.7", "Linux 7.0.14-28-pve", "3 nodes"]
 lang: en
@@ -56,7 +56,7 @@ ceph mon dump -f json | jq '{auth_allowed_ciphers, auth_service_cipher}'
 
 ## Why HEALTH_WARN survived cipher enforcement
 
-After rotation, all three OSDs were `up/in`, all 33 PGs were `active+clean`, and persistent keys and new service tickets had moved to `aes256k`. At the last recorded check on November 13, at 23:53 UTC+03:00, all three monitors were in quorum. `AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE` remained for four service groups with old temporary keys: `mon`, `mds`, `osd`, and `mgr`.
+After rotation, all three OSDs were `up/in`, all 33 PGs were `active+clean`, and persistent keys and new service tickets had moved to `aes256k`. At the November 13 check at 23:53 UTC+03:00, all three monitors were in quorum. `AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE` remained for four service groups with old temporary keys: `mon`, `mds`, `osd`, and `mgr`.
 
 Monitors retain several generations of temporary service keys to handle previously issued tickets. `auth_service_ticket_ttl` was 3,600 seconds on this cluster. Generations expire in sequence, so the warning can persist for several hours. We chose to let the old generations expire. Forcing a reset invalidates previously issued tickets.
 
@@ -66,7 +66,9 @@ ceph health detail
 ceph -s
 ```
 
-The maintenance record ends before a later `HEALTH_OK` was verified for this incident.
+### Follow-up check on November 17
+
+The Ceph dashboard showed `HEALTH_OK` with no warnings or errors. All three monitors appeared healthy, all three OSDs were `up/in`, and all 33 PGs were `active+clean`. The warning about temporary CephX keys had cleared.
 
 ## References and related notes
 
