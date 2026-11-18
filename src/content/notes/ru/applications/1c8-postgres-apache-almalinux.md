@@ -1,12 +1,12 @@
 ---
-title: "1С:Предприятие 8 + Postgres Pro 1C + Apache на AlmaLinux"
-description: "Production-схема развёртывания 1С:Предприятие 8.3.27, Postgres Pro 1C 17 и Apache 2.4 на AlmaLinux 9 с учётом service layout, web-публикации, monitoring и rollback."
+title: "Установка сервера 1С:Предприятие 8 на AlmaLinux 9 с Postgres Pro 1C"
+description: "Практическое развёртывание 1С 8.3 и Postgres Pro 1C на AlmaLinux 9: пакеты, systemd, безопасность, Apache и восстановление."
 category: "Приложения и сервисы"
 tags: ["1c", "postgresql", "postgres-pro", "apache", "almalinux", "erp"]
 published: 2026-09-16
-updated: 2026-09-16
+updated: 2026-11-19
 status: current
-testedOn: ["AlmaLinux 9.8", "1С:Предприятие 8.3.27", "Postgres Pro 1C 17.10", "Apache 2.4.62"]
+testedOn: ["AlmaLinux 9.8", "1С:Предприятие 8.3.27", "Postgres Pro 1C 17", "Apache 2.4.62 (опционально)"]
 featured: true
 lang: ru
 translationKey: "applications/1c8-postgres-apache-almalinux"
@@ -14,13 +14,13 @@ translationKey: "applications/1c8-postgres-apache-almalinux"
 
 ## Контекст
 
-Этот стек реально используется в production как трёхслойная схема:
+На обследованной виртуальной машине размещены сервер 1С и Postgres Pro 1C. Apache установлен, но его использование на дату обновления текста отдельно не подтверждалось. Для веб-клиентов возможна следующая трёхслойная схема:
 
 ```text
 пользователи / web-клиенты
           |
           v
-Apache 2.4
+Apache 2.4 (опционально)
           |
           v
 сервер 1С:Предприятие 8
@@ -29,13 +29,13 @@ Apache 2.4
 Postgres Pro 1C 17
 ```
 
-Подтверждённый baseline сервера:
+Baseline по историческим снимкам 2026 года:
 
 ```text
-OS:              AlmaLinux 9.8
-1С:Предприятие:  ветка 8.3.27
-PostgreSQL:      Postgres Pro 1C 17.10
-Apache:          2.4.62
+OS:             AlmaLinux 9.8
+1С:             ветка 8.3.27, ранее активный unit 8.3.27.2325@default
+Postgres Pro:   1C 17, к ноябрю — 17.11
+Apache:         2.4.62 установлен; актуальный статус не подтверждён
 ```
 
 На сервере установлено несколько build 1С 8.3.27, а default-instance включён для `8.3.27.2325`. Поэтому version-aware подход здесь обязателен: нельзя автоматически считать, что самый новый найденный binary всегда обслуживает production ИБ.
@@ -51,10 +51,9 @@ srv1cv8-8.3.27.1859.service
 srv1cv8-8.3.27.2325@.service
 srv1cv8-8.3.27.2325@default.service
 postgres_exporter.service
-fm-1c-metrics.service / fm-1c-metrics.timer
 ```
 
-Postgres Pro работает отдельным systemd unit, PostgreSQL-метрики собираются через `postgres_exporter`, а для 1С есть отдельная metrics service/timer пара.
+Postgres Pro работает отдельным systemd unit, PostgreSQL-метрики собираются через `postgres_exporter`. Установлен также пользовательский сборщик метрик 1С; его внутреннее имя в публичном материале опущено.
 
 Это удобно для диагностики: application, database, web и monitoring слои можно проверять независимо.
 
@@ -117,11 +116,7 @@ postgrespro-1c-17-server
 psql --version
 ```
 
-Подтверждённый baseline:
-
-```text
-psql (PostgreSQL) 17.10
-```
+На более раннем снимке использовалась версия 17.10; к ноябрю 2026 — 17.11. Фактическую версию проверяйте непосредственно на целевом сервере.
 
 Проверка сервиса:
 
@@ -237,7 +232,7 @@ locale/encoding
 
 ## Apache 2.4
 
-Подтверждённая production-версия — Apache 2.4.62 из AlmaLinux.
+На снимке был установлен Apache 2.4.62. В июньском аудите он был отключён. Включайте его только при необходимости веб-публикации.
 
 Установка:
 
@@ -341,13 +336,7 @@ Internet                 -> PostgreSQL: никогда
 
 ## Monitoring
 
-На production-хосте уже есть:
-
-```text
-postgres_exporter.service
-fm-1c-metrics.service
-fm-1c-metrics.timer
-```
+На обследованном сервере ранее был установлен `postgres_exporter.service` и дополнительный пользовательский сборщик метрик 1С. Название внутреннего пользовательского unit-файла опущено.
 
 Минимально имеет смысл контролировать:
 
