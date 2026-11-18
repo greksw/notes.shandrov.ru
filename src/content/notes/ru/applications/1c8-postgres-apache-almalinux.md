@@ -29,14 +29,14 @@ Apache 2.4 (опционально)
 Postgres Pro 1C 17
 ```
 
-Снимок производственного контура по данным диагностики 13 ноября 2026 года и ранее подтверждённых версий:
+Сводка производственного контура по диагностике октября–ноября 2026 года и ранее подтверждённым версиям:
 
 ~~~text
 OS:             AlmaLinux 9.8
 1С:Предприятие: 8.3.27.2325 (активный экземпляр ранее проверен)
 СУБД:           Postgres Pro 1C 17.11
 Ресурсы VM:     32 vCPU, около 258 GiB RAM
-БД:             27; PostgreSQL и 1С на одной VM
+БД:             26 в контрольном снимке октября 2026 года; 1С и СУБД на одной VM
 PGDATA:         /var/lib/pgpro/1c-17/data
 Apache:         2.4.62 установлен; текущее состояние требует проверки
 ~~~
@@ -172,7 +172,7 @@ sudo dnf install -y \
   postgrespro-1c-17-contrib
 ~~~
 
-**Команды ниже — только для новой, пустой инсталляции.** На существующем srv-1c8c выполнять initdb повторно категорически нельзя: это операция создания кластера, а не обновления.
+**Команды ниже — только для новой, пустой инсталляции после проверки утилиты в выбранной редакции.** На существующем srv-1c8c выполнять initdb повторно категорически нельзя: это операция создания кластера, а не обновления.
 
 ~~~bash
 PGSETUP=/opt/pgpro/1c-17/bin/pg-setup
@@ -193,7 +193,7 @@ sudo /opt/pgpro/1c-17/bin/pg-setup initdb \
 sudo systemctl enable --now postgrespro-1c-17.service
 ~~~
 
-Некоторые метапакеты Postgres Pro способны инициализировать кластер автоматически; сначала убедитесь, что это не произошло. Параметры настройки под 1С (включая возможность --tune=1c) проверяйте в документации и выводе initdb --help **своей** редакции: нельзя переносить опции другой сборки без проверки.
+Поведение пакетов при первичной инициализации зависит от редакции и способа установки; сначала убедитесь, что это не произошло. Параметры настройки под 1С (включая возможность --tune=1c) проверяйте в документации и выводе initdb --help **своей** редакции: нельзя переносить опции другой сборки без проверки.
 
 ~~~bash
 sudo systemctl is-active postgrespro-1c-17.service
@@ -618,7 +618,7 @@ Apache config
 - 1C `webinst`: <https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.27_Administrator_Guide/Chapter_8.Setting_up_web_services_for_1C_Enterprise/8.3._Publication_types/8.3.3._Webinst_utility/>
 - Postgres Pro: настройка для 1С: <https://postgrespro.ru/docs/enterprise/17/one-c-configuring-server>
 - Postgres Pro: установка и поддерживаемые Linux-дистрибутивы (матрица редакций может отличаться): <https://postgrespro.ru/docs/enterprise/17/binary-installation-on-linux>
-- Postgres Pro: pg-setup и параметры initdb: <https://postgrespro.ru/docs/postgrespro/17/pg-setup>
+- Postgres Pro: pg-setup и параметры initdb (документация Standard; сверяйте путь для редакции 1С): <https://postgrespro.ru/docs/postgrespro/17/pg-setup>
 - 1C:Enterprise: установка платформы на Linux: <https://kb.1ci.com/1C_Enterprise_Platform/FAQ/Administration/Server/Installing_1C_Enterprise_8_platform_on_Linux/>
 - 1C:Enterprise: порты сервера: <https://kb.1ci.com/1C_Enterprise_Platform/FAQ/Administration/Server/Ports_setup_for_1C_Enterprise_server/>
 
