@@ -203,3 +203,5 @@ Start-Process $Procmon -ArgumentList '/Terminate /Quiet' -Wait
 
 - [Microsoft Sysinternals Process Monitor](https://learn.microsoft.com/en-us/sysinternals/downloads/procmon)
 - [Troubleshoot application start failures with Process Monitor](https://learn.microsoft.com/en-us/troubleshoot/windows-client/shell-experience/troubleshoot-apps-start-failure-use-process-monitor)
+
+[В третьей части — полный экспорт, серверный импорт и проверка 3D из общей базы.](/ru/notes/storage-backup/truenas-picasso-importer-production-part-3/)

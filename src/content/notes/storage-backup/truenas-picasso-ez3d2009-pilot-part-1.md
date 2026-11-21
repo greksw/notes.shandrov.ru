@@ -194,3 +194,5 @@ Investigate licensing, UNC paths, registry and user-profile state as separate hy
 
 - [Microsoft Sysinternals Process Monitor](https://learn.microsoft.com/en-us/sysinternals/downloads/procmon)
 - [Troubleshoot application start failures with Process Monitor](https://learn.microsoft.com/en-us/troubleshoot/windows-client/shell-experience/troubleshoot-apps-start-failure-use-process-monitor)
+
+[Part 3 follows a complete export through production import and the 3D view.](/notes/storage-backup/truenas-picasso-importer-production-part-3/)

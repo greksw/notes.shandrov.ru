@@ -239,3 +239,5 @@ LIVE SHA256 VERIFIED
 - [Часть 1: пилот Picasso Viewer / Ez3D2009 на TrueNAS](/ru/notes/storage-backup/truenas-picasso-ez3d2009-pilot-part-1/)
 - [Документация TrueNAS SCALE](https://www.truenas.com/docs/scale/)
 - [Microsoft Get-FileHash](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/get-filehash)
+
+[В третьей части — полный экспорт, серверный импорт и проверка 3D из общей базы.](/ru/notes/storage-backup/truenas-picasso-importer-production-part-3/)
